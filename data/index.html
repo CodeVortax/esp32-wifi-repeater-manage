@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 Repeater</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --accent:#4da3ff; --danger:#ff5b5b; --ok:#3ddc84; --text:#eee; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
+  h1 { font-size:1.3rem; margin:0 0 16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
+  .card { background:var(--card); border-radius:12px; padding:14px; }
+  .mac { font-weight:600; font-size:.95rem; word-break:break-all; }
+  .bar-bg { background:#2a2e37; border-radius:8px; height:10px; margin:8px 0; overflow:hidden; }
+  .bar-fill { height:100%; background:var(--accent); transition:width .3s; }
+  .bar-fill.danger { background:var(--danger); }
+  .meta { font-size:.8rem; color:#9aa0aa; }
+  .tags span { display:inline-block; font-size:.7rem; padding:2px 6px; border-radius:6px; margin-inline-end:4px; }
+  .tag-blocked { background:var(--danger); color:#fff; }
+  .tag-wl { background:var(--ok); color:#03230f; }
+  .actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+  button { background:#2a2e37; color:var(--text); border:none; border-radius:8px; padding:6px 10px; font-size:.75rem; cursor:pointer; }
+  button:hover { background:#363b46; }
+  .section { margin-top:26px; }
+  .dns-log { max-height:220px; overflow-y:auto; font-size:.8rem; }
+  .dns-log div { padding:4px 0; border-bottom:1px solid #262a32; }
+  .ping-row { display:flex; gap:8px; margin-top:8px; }
+  input { flex:1; background:#2a2e37; border:1px solid #363b46; color:var(--text); border-radius:8px; padding:8px; }
+  #pingResult { margin-top:8px; font-size:.85rem; }
+  .settings-grid { display:grid; gap:10px; margin-bottom:12px; }
+  .settings-grid label { display:flex; flex-direction:column; gap:4px; font-size:.8rem; color:#9aa0aa; }
+  .settings-grid input { width:100%; }
+  #settingsStatus { margin-top:8px; font-size:.85rem; }
+</style>
+</head>
+<body>
+  <h1>ESP32 WiFi Repeater</h1>
+
+  <div id="devices" class="grid"></div>
+
+  <div class="section">
+    <h2>Domains (live)</h2>
+    <div id="dnsLog" class="dns-log card"></div>
+  </div>
+
+  <div class="section card">
+    <h2>Ping</h2>
+    <div class="ping-row">
+      <input id="pingHost" placeholder="8.8.8.8 or example.com" value="8.8.8.8">
+      <button onclick="runPing()">Ping</button>
+    </div>
+    <div id="pingResult"></div>
+  </div>
+
+  <div class="section card">
+    <h2>Settings</h2>
+    <div class="settings-grid">
+      <label>Home WiFi SSID (upstream)
+        <input id="staSsid" placeholder="leave blank to keep current">
+      </label>
+      <label>Home WiFi Password
+        <input id="staPass" type="password" placeholder="leave blank to keep current">
+      </label>
+      <label>Repeater name (AP SSID)
+        <input id="apSsid" placeholder="leave blank to keep current">
+      </label>
+      <label>Repeater Password
+        <input id="apPass" type="password" placeholder="leave blank to keep current">
+      </label>
+      <label>Telegram Bot Token
+        <input id="tgToken" placeholder="leave blank to keep current">
+      </label>
+      <label>Telegram Chat ID
+        <input id="tgChat" placeholder="leave blank to keep current">
+      </label>
+    </div>
+    <button onclick="saveSettings()">Save & Reboot</button>
+    <div id="settingsStatus" class="meta"></div>
+  </div>
+
+<script>
+let ws;
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (ev) => render(JSON.parse(ev.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+
+function fmtMB(bytes) { return (bytes / (1024*1024)).toFixed(0); }
+
+function render(data) {
+  const grid = document.getElementById('devices');
+  grid.innerHTML = '';
+  (data.devices || []).forEach(d => {
+    const usedMB = fmtMB(d.bytesToday);
+    const pct = Math.min(100, (usedMB / d.limitMB) * 100);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="mac">${d.mac}</div>
+      <div class="tags">
+        ${d.blocked ? '<span class="tag-blocked">Blocked</span>' : ''}
+        ${d.whitelisted ? '<span class="tag-wl">Whitelist</span>' : ''}
+      </div>
+      <div class="bar-bg"><div class="bar-fill ${pct>90?'danger':''}" style="width:${pct}%"></div></div>
+      <div class="meta">${usedMB} / ${d.limitMB} MB today</div>
+      <div class="actions">
+        ${d.blocked
+          ? `<button onclick="call('unblock','${d.mac}')">Unblock</button>`
+          : `<button onclick="call('block','${d.mac}')">Block</button>`}
+        <button onclick="call('whitelist','${d.mac}', d.whitelisted?0:1)">
+          ${d.whitelisted ? 'Remove whitelist' : 'Whitelist'}
+        </button>
+        <button onclick="setLimit('${d.mac}')">Set limit</button>
+      </div>`;
+    grid.appendChild(card);
+  });
+
+  const dnsBox = document.getElementById('dnsLog');
+  dnsBox.innerHTML = (data.dns || []).slice().reverse()
+    .map(e => `<div>${e.ip} → ${e.domain}</div>`).join('');
+}
+
+function call(action, mac, enabled) {
+  const body = new URLSearchParams({ mac });
+  if (enabled !== undefined) body.append('enabled', enabled);
+  fetch(`/api/${action}`, { method: 'POST', body });
+}
+
+function setLimit(mac) {
+  const mb = prompt('Daily limit in MB for ' + mac, '1024');
+  if (!mb) return;
+  fetch('/api/setLimit', { method:'POST', body: new URLSearchParams({ mac, mb }) });
+}
+
+function runPing() {
+  const host = document.getElementById('pingHost').value;
+  document.getElementById('pingResult').textContent = 'Pinging...';
+  fetch(`/api/ping?host=${encodeURIComponent(host)}`)
+    .then(r => r.json())
+    .then(r => document.getElementById('pingResult').textContent =
+      `${r.sent} sent, ${r.received} received, ${r.lossPct}% loss, avg ${r.avgMs}ms`);
+}
+
+function loadSettings() {
+  fetch('/api/settings')
+    .then(r => r.json())
+    .then(s => {
+      document.getElementById('staSsid').placeholder = s.sta_ssid ? `current: ${s.sta_ssid}` : 'leave blank to keep current';
+      document.getElementById('apSsid').placeholder = s.ap_ssid ? `current: ${s.ap_ssid}` : 'leave blank to keep current';
+    });
+}
+loadSettings();
+
+function saveSettings() {
+  const body = new URLSearchParams({
+    sta_ssid: document.getElementById('staSsid').value,
+    sta_password: document.getElementById('staPass').value,
+    ap_ssid: document.getElementById('apSsid').value,
+    ap_password: document.getElementById('apPass').value,
+    tg_token: document.getElementById('tgToken').value,
+    tg_chat_id: document.getElementById('tgChat').value,
+  });
+  document.getElementById('settingsStatus').textContent = 'Saving...';
+  fetch('/api/settings', { method: 'POST', body })
+    .then(r => r.text())
+    .then(t => {
+      document.getElementById('settingsStatus').textContent = t;
+      if (t.includes('rebooting')) {
+        setTimeout(() => location.reload(), 9000);
+      }
+    });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+name: Build Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pioarduino Core
+        run: pip install -U pioarduino
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-v2-${{ hashFiles('platformio.ini') }}
+
+      - name: Build firmware (includes auto SPIFFS + merge)
+        run: pio run
+
+      - name: Check merged image fits in 4MB flash
+        run: |
+          SIZE=$(stat -c%s dist/esp32dev-merged.bin)
+          MAX=$((4*1024*1024))
+          echo "esp32dev-merged.bin size: $SIZE bytes (max: $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::merged image exceeds 4MB flash size"
+            exit 1
+          fi
+
+      - name: Rename release artifact
+        run: cp dist/esp32dev-merged.bin esp32-wifi-repeater-${{ github.ref_name }}.bin
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: esp32-wifi-repeater-${{ github.ref_name }}.bin
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: esp32-wifi-repeater-${{ github.ref_name }}.bin
+          generate_release_notes: true
