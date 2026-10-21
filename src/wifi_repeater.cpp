@@ -44,7 +44,12 @@ static void offerSelfAsDns() {
     esp_netif_dhcps_start(ap);
 }
 
+static void macStr(const uint8_t *m, char *o) {
+    snprintf(o, 18, "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
 static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+    char mac[18];
     switch (event) {
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
         staConnected = true;
@@ -56,8 +61,19 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
         Serial.println("[NAT] NAPT enabled - repeater is live");
         break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-        if (staConnected) Serial.println("[STA] upstream lost, retrying...");
+        // reason 2/15/202 = wrong password, 201 = router not found, 8 = router dropped us
+        Serial.printf("[STA] disconnected, reason=%d%s\n", info.wifi_sta_disconnected.reason,
+                      staConnected ? " (was connected)" : "");
         staConnected = false;
+        break;
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+        macStr(info.wifi_ap_staconnected.mac, mac);
+        Serial.printf("[AP] client joined %s (aid %d)\n", mac, info.wifi_ap_staconnected.aid);
+        break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+        macStr(info.wifi_ap_stadisconnected.mac, mac);
+        Serial.printf("[AP] client left %s (aid %d, reason %d, channel now %d)\n", mac,
+                      info.wifi_ap_stadisconnected.aid, info.wifi_ap_stadisconnected.reason, WiFi.channel());
         break;
     default:
         break;
