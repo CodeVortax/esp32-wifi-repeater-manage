@@ -63,7 +63,42 @@ def find(name: str) -> Path:
     raise SystemExit(f"[webflash] {name} not found in {BUILD_DIR} - did the build fail?")
 
 
+def ensure_spiffs() -> None:
+    """Build the web-UI image (data/ -> spiffs.bin) unless it is up to date.
+
+    Done here instead of through a SCons target dependency: that dependency did
+    not run reliably on pioarduino, which left spiffs.bin missing."""
+    data_dir = PROJECT_DIR / "data"
+    image = BUILD_DIR / "spiffs.bin"
+    if not data_dir.is_dir():
+        raise SystemExit("[webflash] no data/ folder, nothing to build the web UI from")
+    newest = max((f.stat().st_mtime for f in data_dir.rglob("*") if f.is_file()), default=0)
+    if image.exists() and image.stat().st_mtime >= newest:
+        print("[webflash] spiffs.bin is up to date")
+        return
+    print("[webflash] building the web UI image (buildfs)...")
+    python = env.subst("$PYTHONEXE")                            # noqa: F821
+    subprocess.check_call([python, "-m", "platformio", "run", "-d", str(PROJECT_DIR),
+                           "-e", PIOENV, "-t", "buildfs"])
+
+
+def find_boot_app0():
+    """boot_app0.bin makes the bootloader start app0 (it lives in otadata)."""
+    for root in (BUILD_DIR,):
+        for hit in root.rglob("boot_app0.bin"):
+            return hit
+    try:
+        pkg = env.PioPlatform().get_package_dir("framework-arduinoespressif32")   # noqa: F821
+        cand = Path(pkg) / "tools" / "partitions" / "boot_app0.bin"
+        if cand.exists():
+            return cand
+    except Exception:
+        pass
+    return None
+
+
 def merge(*_args, **_kwargs):
+    ensure_spiffs()
     board = env.BoardConfig()                                   # noqa: F821
     chip = board.get("build.mcu", "esp32").lower()
     flash_size = board.get("upload.flash_size", "4MB")
@@ -86,7 +121,13 @@ def merge(*_args, **_kwargs):
         (parts["spiffs"][0], find("spiffs.bin")),
     ]
 
-    spiffs_size = pieces[3][1].stat().st_size
+    boot_app0 = find_boot_app0()
+    if boot_app0 and "otadata" in parts:
+        pieces.insert(2, (parts["otadata"][0], boot_app0))
+    else:
+        print("[webflash] note: boot_app0.bin not found, otadata left blank (the bootloader still starts app0)")
+
+    spiffs_size = [p for o, p in pieces if o == parts["spiffs"][0]][0].stat().st_size
     if spiffs_size > parts["spiffs"][1]:
         raise SystemExit(f"[webflash] web UI image ({spiffs_size} B) is bigger than the spiffs partition")
 
@@ -120,7 +161,7 @@ def merge(*_args, **_kwargs):
 
 env.AddCustomTarget(                                            # noqa: F821
     name="webflash",
-    dependencies=["buildprog", "buildfs"],
+    dependencies=["buildprog"],
     actions=[merge],
     title="WebFlash",
     description="Build firmware + web UI and merge them into dist/<env>-merged.bin",
