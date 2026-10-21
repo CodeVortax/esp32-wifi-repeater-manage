@@ -10,6 +10,22 @@ extern "C" {
 
 static volatile bool staConnected = false;
 
+// In AP+STA mode the radio has ONE channel. When the STA joins a router on a different channel the
+// ESP32 silently moves the AP there, which drops every connected client (this is what kicked you out
+// of the dashboard right after boot). So find the router's channel first and start the AP on it.
+static uint8_t findUpstreamChannel(const String &ssid) {
+    if (ssid.length() == 0) return 1;
+    int n = WiFi.scanNetworks(false, false, false, 300);    // blocking, ~2-3 s, once at boot
+    uint8_t ch = 1;
+    int best = -1000;
+    for (int i = 0; i < n; i++) {
+        if (WiFi.SSID(i) == ssid && WiFi.RSSI(i) > best) { best = WiFi.RSSI(i); ch = WiFi.channel(i); }
+    }
+    WiFi.scanDelete();
+    Serial.printf("[AP] upstream \"%s\" %s, using channel %d\n", ssid.c_str(), best > -1000 ? "found" : "not found", ch);
+    return ch;
+}
+
 // Hand out the ESP itself as the DNS server so the DNS monitor sees every
 // lookup. Must run after the AP netif is up.
 static void offerSelfAsDns() {
@@ -60,13 +76,12 @@ void wifiRepeater_init() {
     String staSsid = settings_getStaSsid();
     String staPass = settings_getStaPassword();
 
-    // Channel 1 until the STA locks one; the ESP32 then moves the AP onto the
-    // upstream router's channel by itself.
-    bool apOk = WiFi.softAP(apSsid.c_str(), apPass.c_str(), 1, 0, AP_MAX_CONN);
+    uint8_t apChannel = findUpstreamChannel(staSsid);
+    bool apOk = WiFi.softAP(apSsid.c_str(), apPass.c_str(), apChannel, 0, AP_MAX_CONN);
     if (!apOk) {
         // A bad stored AP password must never lock the dashboard away.
         Serial.println("[AP] start failed with saved settings, falling back to defaults");
-        apOk = WiFi.softAP(AP_SSID, AP_PASSWORD, 1, 0, AP_MAX_CONN);
+        apOk = WiFi.softAP(AP_SSID, AP_PASSWORD, apChannel, 0, AP_MAX_CONN);
     }
     Serial.printf("[AP] %s SSID=%s IP=%s\n", apOk ? "up" : "FAILED",
                   apSsid.c_str(), WiFi.softAPIP().toString().c_str());
