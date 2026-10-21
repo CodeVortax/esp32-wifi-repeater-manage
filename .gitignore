@@ -2,5 +2,8 @@
 .pioenvs/
 .piolibdeps/
 .vscode/
+.idea/
 *.bin
+*.bin.sha256
 dist/
+.DS_Store

@@ -1,191 +1,127 @@
+"""
+Adds the `webflash` target:
+
+    pio run -t webflash
+
+It builds the firmware and the SPIFFS image (the web UI in data/), then merges
+bootloader + partition table + app + SPIFFS into ONE file:
+
+    dist/<env>-merged.bin
+
+Flash that single file at offset 0x0 (ESP Web Tools, esptool, ...).
+Every offset and size comes from the board and from the partition table, so
+changing min_spiffs.csv or the board needs no edit here.
+"""
+import hashlib
 import subprocess
-import os
+import sys
 from pathlib import Path
 
-Import("env")
+Import("env")  # noqa: F821  (provided by PlatformIO/SCons)
 
-PROJECT_DIR = Path(env["PROJECT_DIR"])
-BUILD_DIR   = Path(env.subst("$BUILD_DIR"))
-PIOENV      = env["PIOENV"]
-
-DATA_DIR = PROJECT_DIR / "data"
+PROJECT_DIR = Path(env["PROJECT_DIR"])              # noqa: F821
+BUILD_DIR = Path(env.subst("$BUILD_DIR"))           # noqa: F821
+PIOENV = env["PIOENV"]                              # noqa: F821
 DIST_DIR = PROJECT_DIR / "dist"
-DIST_DIR.mkdir(parents=True, exist_ok=True)
 
-print(f"[merge_bins] loaded for env={PIOENV} build_dir={BUILD_DIR}")
 
-def _parse_size(s: str) -> int:
-    s = s.strip()
-    if not s:
-        return 0
-    s_up = s.upper()
-    if s_up.startswith("0X"):
-        return int(s_up, 16)
-    mul = 1
-    if s_up.endswith("K"):
-        mul = 1024
-        s_up = s_up[:-1]
-    elif s_up.endswith("M"):
-        mul = 1024 * 1024
-        s_up = s_up[:-1]
-    return int(s_up) * mul
+def parse_int(text: str) -> int:
+    text = text.strip().upper()
+    if text.startswith("0X"):
+        return int(text, 16)
+    mult = 1
+    if text.endswith("K"):
+        mult, text = 1024, text[:-1]
+    elif text.endswith("M"):
+        mult, text = 1024 * 1024, text[:-1]
+    return int(text) * mult
 
-def _align_up(x: int, a: int) -> int:
-    return (x + (a - 1)) & ~(a - 1)
 
-def _find_file(root: Path, filename: str):
-    for p in root.rglob(filename):
-        return p
-    return None
-
-def _compute_spiffs_offset_from_csv(csv_path: Path) -> int:
-    cur = 0
-    spiffs_ofs = None
-    lines = csv_path.read_text(encoding="utf-8").splitlines()
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#"):
+def read_partitions(csv_path: Path) -> dict:
+    """name -> (offset, size) from an ESP-IDF partition CSV."""
+    parts, cursor = {}, 0x9000          # first partition starts after the partition table
+    for raw in csv_path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
             continue
         cols = [c.strip() for c in line.split(",")]
         if len(cols) < 5:
             continue
-        name = cols[0]
-        offset_s = cols[3]
-        size_s   = cols[4]
-        size = _parse_size(size_s)
-        if offset_s:
-            cur = _parse_size(offset_s)
-        else:
-            cur = _align_up(cur, 0x1000)
-        if name.lower() == "spiffs":
-            spiffs_ofs = cur
-        cur += size
-    if spiffs_ofs is None:
-        raise RuntimeError(f"Could not find 'spiffs' partition in {csv_path}")
-    return spiffs_ofs
+        name, offset, size = cols[0], cols[3], parse_int(cols[4])
+        cursor = parse_int(offset) if offset else (cursor + 0xFFF) & ~0xFFF
+        parts[name] = (cursor, size)
+        cursor += size
+    return parts
 
-def _spiffs_bin_path() -> Path:
-    return BUILD_DIR / "spiffs.bin"
 
-def _firmware_bin_path() -> Path:
-    p = BUILD_DIR / "firmware.bin"
-    if p.exists():
-        return p
-    p2 = _find_file(BUILD_DIR, "firmware.bin")
-    if p2:
-        return p2
-    raise RuntimeError(f"firmware.bin not found in {BUILD_DIR}")
+def find(name: str) -> Path:
+    direct = BUILD_DIR / name
+    if direct.exists():
+        return direct
+    for hit in BUILD_DIR.rglob(name):
+        return hit
+    raise SystemExit(f"[webflash] {name} not found in {BUILD_DIR} - did the build fail?")
 
-def _need_buildfs() -> bool:
-    if not DATA_DIR.exists():
-        return False
-    out = _spiffs_bin_path()
-    if not out.exists():
-        return True
-    out_mtime = out.stat().st_mtime
-    for p in DATA_DIR.rglob("*"):
-        if p.is_file() and p.stat().st_mtime > out_mtime:
-            return True
-    return False
 
-def _run_buildfs_if_needed():
-    if not DATA_DIR.exists():
-        print("[auto] no /data folder -> skip buildfs")
-        return
-    if not _need_buildfs():
-        print("[auto] SPIFFS already up to date -> skip buildfs")
-        return
-    print(f"[auto] running buildfs for env {PIOENV} ...")
-    python = env.subst("$PYTHONEXE")
-    subprocess.check_call([python, "-m", "platformio", "run", "-e", PIOENV, "-t", "buildfs"])
+def merge(*_args, **_kwargs):
+    board = env.BoardConfig()                                   # noqa: F821
+    chip = board.get("build.mcu", "esp32").lower()
+    flash_size = board.get("upload.flash_size", "4MB")
+    flash_mode = board.get("build.flash_mode", "dio")
+    f_flash = str(board.get("build.f_flash", "40000000L")).rstrip("L")
+    flash_freq = "80m" if f_flash.isdigit() and int(f_flash) >= 80_000_000 else "40m"
 
-def _need_merge(out_file: Path, inputs) -> bool:
-    if not out_file.exists():
-        return True
-    out_mtime = out_file.stat().st_mtime
-    return any(i.exists() and i.stat().st_mtime > out_mtime for i in inputs)
+    csv_path = PROJECT_DIR / env.GetProjectOption("board_build.partitions")   # noqa: F821
+    parts = read_partitions(csv_path)
+    for needed in ("app0", "spiffs"):
+        if needed not in parts:
+            raise SystemExit(f"[webflash] partition '{needed}' missing in {csv_path.name}")
 
-def _merge_bin():
-    bootloader = _find_file(BUILD_DIR, "bootloader.bin")
-    partitions = _find_file(BUILD_DIR, "partitions.bin") or _find_file(BUILD_DIR, "partition-table.bin")
-    app_bin    = _firmware_bin_path()
-    spiffs_bin = _spiffs_bin_path()
-
-    if not bootloader:
-        raise RuntimeError(f"bootloader.bin not found in {BUILD_DIR}")
-    if not partitions:
-        raise RuntimeError(f"partitions.bin not found in {BUILD_DIR}")
-    if not spiffs_bin.exists():
-        raise RuntimeError(f"spiffs.bin not found in {BUILD_DIR} (buildfs not run?)")
-
-    part_csv = PROJECT_DIR / env.GetProjectOption("board_build.partitions", "partition.csv")
-    if not part_csv.exists():
-        part_csv = PROJECT_DIR / "partition.csv"
-    spiffs_ofs = _compute_spiffs_offset_from_csv(part_csv)
-
-    chip = env.BoardConfig().get("build.mcu", "esp32").lower()
-    if chip in ["esp32", "esp32s2"]:
-        bootloader_ofs = "0x1000"
-    elif chip in ["esp32c5"]:
-        bootloader_ofs = "0x2000"
-    else:
-        bootloader_ofs = "0x0"
-
-    partitions_ofs = "0x8000"
-    app_ofs        = "0x10000"
-    spiffs_ofs_s   = f"0x{spiffs_ofs:X}"
-
-    python  = env.subst("$PYTHONEXE")
-    esptool = env.subst("$UPLOADER")
-
-    flash_mode = env.BoardConfig().get("build.flash_mode", "dio")
-    flash_size = "4MB"
-    f_flash = str(env.BoardConfig().get("build.f_flash", "40000000")).replace("L", "")
-    flash_freq = "80m" if f_flash.isdigit() and int(f_flash) >= 80000000 else "40m"
-
-    out_file = DIST_DIR / f"{PIOENV}-merged.bin"
-
-    inputs = [bootloader, partitions, app_bin, spiffs_bin, part_csv]
-    if not _need_merge(out_file, inputs):
-        print(f"[auto] merged already up to date -> skip ({out_file.name})")
-        return
-
-    cmd = [
-        str(python), str(esptool),
-        "--chip", str(chip),
-        "merge_bin",
-        "--fill-flash-size", "4MB",
-        "-o", str(out_file),
-        "--flash_mode", str(flash_mode),
-        "--flash_freq", str(flash_freq),
-        "--flash_size", str(flash_size),
-        bootloader_ofs, str(bootloader),
-        partitions_ofs, str(partitions),
-        app_ofs, str(app_bin),
-        spiffs_ofs_s, str(spiffs_bin),
+    # The 2nd-stage bootloader lives at 0x1000 on ESP32/ESP32-S2, 0x0 on newer chips.
+    bootloader_offset = 0x1000 if chip in ("esp32", "esp32s2") else 0x2000 if chip == "esp32c5" else 0x0
+    pieces = [
+        (bootloader_offset, find("bootloader.bin")),
+        (0x8000, find("partitions.bin")),
+        (parts["app0"][0], find("firmware.bin")),
+        (parts["spiffs"][0], find("spiffs.bin")),
     ]
 
-    print("\n[auto] Merge command:")
-    print(" ".join(cmd))
-    subprocess.check_call(cmd)
-    print(f"[auto] OK -> {out_file}\n")
+    spiffs_size = pieces[3][1].stat().st_size
+    if spiffs_size > parts["spiffs"][1]:
+        raise SystemExit(f"[webflash] web UI image ({spiffs_size} B) is bigger than the spiffs partition")
 
-env.AddCustomTarget(
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    out = DIST_DIR / f"{PIOENV}-merged.bin"
+
+    python = env.subst("$PYTHONEXE")                            # noqa: F821
+    uploader = env.subst("$UPLOADER")                           # noqa: F821
+    tool = [python, uploader] if uploader and Path(uploader).exists() else [python, "-m", "esptool"]
+
+    cmd = tool + [
+        "--chip", chip, "merge_bin",
+        "--fill-flash-size", flash_size,
+        "-o", str(out),
+        "--flash_mode", flash_mode,
+        "--flash_freq", flash_freq,
+        "--flash_size", flash_size,
+    ]
+    for offset, path in pieces:
+        cmd += [f"0x{offset:X}", str(path)]
+
+    print("[webflash]", " ".join(cmd))
+    subprocess.check_call(cmd)
+
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    (DIST_DIR / f"{out.name}.sha256").write_text(f"{digest}  {out.name}\n")
+    print(f"[webflash] OK -> {out}  ({out.stat().st_size} bytes)")
+    print(f"[webflash] flash it at offset 0x0:  esptool.py write_flash 0x0 {out.name}")
+    sys.stdout.flush()
+
+
+env.AddCustomTarget(                                            # noqa: F821
     name="webflash",
     dependencies=["buildprog", "buildfs"],
-    actions=[lambda *a, **k: _merge_bin()],
+    actions=[merge],
     title="WebFlash",
-    description="Build firmware + SPIFFS and create dist/<env>-merged.bin",
+    description="Build firmware + web UI and merge them into dist/<env>-merged.bin",
 )
-
-def _auto_after_prog_built(source, target, env, **kwargs):
-    if os.environ.get("PWEBFLASH_RUNNING") == "1":
-        return
-    os.environ["PWEBFLASH_RUNNING"] = "1"
-    try:
-        _run_buildfs_if_needed()
-        _merge_bin()
-    finally:
-        os.environ.pop("PWEBFLASH_RUNNING", None)
-
-env.AddPostAction("$BUILD_DIR/firmware.bin", _auto_after_prog_built)

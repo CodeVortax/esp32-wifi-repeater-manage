@@ -3,25 +3,23 @@
 #include "settings.h"
 #include "quota_manager.h"
 #include "diagnostics.h"
+#include "wifi_repeater.h"
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
 
-static WiFiClientSecure secured;
-static UniversalTelegramBot *bot = nullptr;
-static String ownerChatId;
-static uint32_t lastPoll = 0;
-
 static String formatStatus() {
-    int count;
-    DeviceUsage *devs = quota_getDevices(count);
+    DeviceUsage devs[MAX_TRACKED_DEVICES];
+    int n = quota_snapshot(devs, MAX_TRACKED_DEVICES);
+    if (n == 0) return "No devices seen yet.";
+
     String out = "Devices:\n";
-    for (int i = 0; i < count; i++) {
-        if (!devs[i].active) continue;
+    for (int i = 0; i < n; i++) {
         char line[128];
-        snprintf(line, sizeof(line), "%s  %.0f/%lu MB  %s%s\n",
+        snprintf(line, sizeof(line), "%s %s  %.0f/%s MB %s%s\n",
+                 devs[i].online ? "●" : "○",
                  devs[i].macStr,
                  devs[i].bytesToday / (1024.0 * 1024.0),
-                 devs[i].dailyLimitMB,
+                 devs[i].dailyLimitMB ? String(devs[i].dailyLimitMB).c_str() : "unlimited",
                  devs[i].blocked ? "[BLOCKED] " : "",
                  devs[i].whitelisted ? "[WHITELIST]" : "");
         out += line;
@@ -29,54 +27,73 @@ static String formatStatus() {
     return out;
 }
 
-static void handleCommand(const String &chatId, String text) {
+static void handleCommand(UniversalTelegramBot &bot, const String &chatId, String text) {
     text.trim();
+    int sp = text.indexOf(' ');
+    String cmd = (sp < 0) ? text : text.substring(0, sp);
+    String arg = (sp < 0) ? ""   : text.substring(sp + 1);
+    arg.trim();
+    cmd.toLowerCase();
+    int at = cmd.indexOf('@');                    // "/status@MyBot" in groups
+    if (at > 0) cmd = cmd.substring(0, at);
 
-    if (text == "/status") {
-        bot->sendMessage(chatId, formatStatus(), "");
-    } else if (text.startsWith("/block ")) {
-        String mac = text.substring(7);
-        bot->sendMessage(chatId, quota_block(mac.c_str()) ? "Blocked " + mac : "Not found", "");
-    } else if (text.startsWith("/unblock ")) {
-        String mac = text.substring(9);
-        bot->sendMessage(chatId, quota_unblock(mac.c_str()) ? "Unblocked " + mac : "Not found", "");
-    } else if (text.startsWith("/setquota ")) {
-        int sp = text.indexOf(' ', 10);
-        if (sp < 0) { bot->sendMessage(chatId, "Usage: /setquota AA:BB:CC:DD:EE:FF 500", ""); return; }
-        String mac = text.substring(10, sp);
-        uint32_t mb = text.substring(sp + 1).toInt();
-        bot->sendMessage(chatId, quota_setLimit(mac.c_str(), mb) ? "Quota updated" : "Not found", "");
-    } else if (text.startsWith("/ping ")) {
-        String host = text.substring(6);
-        bot->sendMessage(chatId, diagnostics_ping(host.c_str()), "");
-    } else if (text == "/help" || text == "/start") {
-        bot->sendMessage(chatId,
-            "/status\n/block <mac>\n/unblock <mac>\n/setquota <mac> <mb>\n/ping <host>", "");
+    if (cmd == "/status") {
+        bot.sendMessage(chatId, formatStatus(), "");
+    } else if (cmd == "/block") {
+        bot.sendMessage(chatId, quota_block(arg.c_str()) ? "Blocked " + arg : "Device not found", "");
+    } else if (cmd == "/unblock") {
+        bot.sendMessage(chatId, quota_unblock(arg.c_str()) ? "Unblocked " + arg : "Device not found", "");
+    } else if (cmd == "/whitelist" || cmd == "/unwhitelist") {
+        bool on = (cmd == "/whitelist");
+        bot.sendMessage(chatId, quota_setWhitelist(arg.c_str(), on) ? (on ? "Whitelisted " : "Removed from whitelist ") + arg
+                                                                      : "Device not found", "");
+    } else if (cmd == "/setquota") {
+        int sp2 = arg.indexOf(' ');
+        if (sp2 < 0) { bot.sendMessage(chatId, "Usage: /setquota AA:BB:CC:DD:EE:FF 500  (MB, 0 = unlimited)", ""); return; }
+        String mac = arg.substring(0, sp2);
+        long mb = arg.substring(sp2 + 1).toInt();
+        if (mb < 0 || mb > 10000000) { bot.sendMessage(chatId, "Quota must be 0 - 10000000 MB", ""); return; }
+        bot.sendMessage(chatId, quota_setLimit(mac.c_str(), (uint32_t)mb) ? "Quota updated" : "Device not found", "");
+    } else if (cmd == "/ping") {
+        bot.sendMessage(chatId, diagnostics_pingBlocking(arg.length() ? arg : "8.8.8.8"), "");
+    } else if (cmd == "/help" || cmd == "/start") {
+        bot.sendMessage(chatId,
+            "/status\n/block <mac>\n/unblock <mac>\n/whitelist <mac>\n/unwhitelist <mac>\n"
+            "/setquota <mac> <mb>\n/ping <host>", "");
     } else {
-        bot->sendMessage(chatId, "Unknown command. /help for the list.", "");
+        bot.sendMessage(chatId, "Unknown command. /help for the list.", "");
+    }
+}
+
+static void telegramTask(void *) {
+    // Everything TLS-related lives in this task, so the slow handshake never
+    // stalls the web server, DNS proxy or quota loop.
+    WiFiClientSecure secured;
+    secured.setInsecure();   // fine for a home project; pin Telegram's root cert for anything more
+    String token = settings_getTelegramToken();
+    String owner = settings_getTelegramChatId();
+    UniversalTelegramBot bot(token, secured);
+    Serial.println("[TG] bot task running");
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(TELEGRAM_POLL_MS));
+        if (!wifiRepeater_isUpstreamConnected()) continue;
+
+        int updates = bot.getUpdates(bot.last_message_received + 1);
+        while (updates) {
+            for (int i = 0; i < updates; i++) {
+                if (bot.messages[i].chat_id != owner) continue;   // only the owner may command the device
+                handleCommand(bot, bot.messages[i].chat_id, bot.messages[i].text);
+            }
+            updates = bot.getUpdates(bot.last_message_received + 1);
+        }
     }
 }
 
 void telegramBot_init() {
-    secured.setInsecure(); // simplest path for a personal/home project;
-                            // pin Telegram's root cert instead for production use
-    String token = settings_getTelegramToken();
-    ownerChatId = settings_getTelegramChatId();
-    bot = new UniversalTelegramBot(token, secured);
-    Serial.println("[TG] bot ready");
-}
-
-void telegramBot_loop() {
-    if (millis() - lastPoll < TELEGRAM_POLL_MS) return;
-    lastPoll = millis();
-
-    int updateCount = bot->getUpdates(bot->last_message_received + 1);
-    while (updateCount) {
-        for (int i = 0; i < updateCount; i++) {
-            String chatId = bot->messages[i].chat_id;
-            if (chatId != ownerChatId) continue; // only respond to the owner
-            handleCommand(chatId, bot->messages[i].text);
-        }
-        updateCount = bot->getUpdates(bot->last_message_received + 1);
+    if (!settings_telegramConfigured()) {
+        Serial.println("[TG] no bot token/chat id saved - Telegram disabled");
+        return;
     }
+    xTaskCreate(telegramTask, "telegram", 12288, nullptr, 1, nullptr);
 }
