@@ -1,178 +1,460 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>ESP32 Repeater</title>
 <style>
-  :root { --bg:#0f1115; --card:#1a1d24; --accent:#4da3ff; --danger:#ff5b5b; --ok:#3ddc84; --text:#eee; }
+  :root {
+    --bg:#0f1218; --surface:#171b23; --surface2:#1f2430; --line:#2a3040;
+    --text:#e8eaf0; --muted:#98a1b3;
+    --blue:#4285f4; --green:#34a853; --red:#ea4335; --amber:#fbbc04;
+    --radius:16px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f4f6fb; --surface:#ffffff; --surface2:#eef1f8; --line:#dde2ee; --text:#1b1f2a; --muted:#5d6678; }
+  }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
-  h1 { font-size:1.3rem; margin:0 0 16px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
-  .card { background:var(--card); border-radius:12px; padding:14px; }
-  .mac { font-weight:600; font-size:.95rem; word-break:break-all; }
-  .bar-bg { background:#2a2e37; border-radius:8px; height:10px; margin:8px 0; overflow:hidden; }
-  .bar-fill { height:100%; background:var(--accent); transition:width .3s; }
-  .bar-fill.danger { background:var(--danger); }
-  .meta { font-size:.8rem; color:#9aa0aa; }
-  .tags span { display:inline-block; font-size:.7rem; padding:2px 6px; border-radius:6px; margin-inline-end:4px; }
-  .tag-blocked { background:var(--danger); color:#fff; }
-  .tag-wl { background:var(--ok); color:#03230f; }
-  .actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
-  button { background:#2a2e37; color:var(--text); border:none; border-radius:8px; padding:6px 10px; font-size:.75rem; cursor:pointer; }
-  button:hover { background:#363b46; }
-  .section { margin-top:26px; }
-  .dns-log { max-height:220px; overflow-y:auto; font-size:.8rem; }
-  .dns-log div { padding:4px 0; border-bottom:1px solid #262a32; }
-  .ping-row { display:flex; gap:8px; margin-top:8px; }
-  input { flex:1; background:#2a2e37; border:1px solid #363b46; color:var(--text); border-radius:8px; padding:8px; }
-  #pingResult { margin-top:8px; font-size:.85rem; }
-  .settings-grid { display:grid; gap:10px; margin-bottom:12px; }
-  .settings-grid label { display:flex; flex-direction:column; gap:4px; font-size:.8rem; color:#9aa0aa; }
-  .settings-grid input { width:100%; }
-  #settingsStatus { margin-top:8px; font-size:.85rem; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Arabic",sans-serif; }
+  .wrap { max-width:1040px; margin:0 auto; padding:16px 16px 48px; }
+  h1 { font-size:1.25rem; margin:0; font-weight:650; }
+  h2 { font-size:1rem; margin:0 0 12px; font-weight:650; }
+  button, input { font:inherit; color:inherit; }
+
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+  header .grow { flex:1; min-width:0; }
+  .sub { color:var(--muted); font-size:.8rem; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+          background:var(--surface); border:1px solid var(--line); font-size:.8rem; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  .dot.ok { background:var(--green); box-shadow:0 0 0 3px color-mix(in srgb, var(--green) 25%, transparent); }
+  .dot.bad { background:var(--red); }
+
+  .btn { background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:7px 12px;
+         cursor:pointer; font-size:.82rem; }
+  .btn:hover { border-color:var(--blue); }
+  .btn:focus-visible, input:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .btn.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .btn.danger  { color:var(--red); }
+  .btn.ok      { color:var(--green); }
+  .btn:disabled { opacity:.55; cursor:default; }
+
+  .banner { background:color-mix(in srgb, var(--amber) 16%, var(--surface)); border:1px solid var(--amber);
+            border-radius:12px; padding:10px 14px; margin-bottom:16px; font-size:.88rem; }
+
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:20px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px; }
+  .stat .label { color:var(--muted); font-size:.78rem; }
+  .stat .value { font-size:1.5rem; font-weight:650; margin-top:2px; overflow-wrap:anywhere; }
+  .stat .hint  { color:var(--muted); font-size:.78rem; margin-top:2px; overflow-wrap:anywhere; }
+
+  section { margin-top:22px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:12px; }
+  .empty { color:var(--muted); text-align:center; padding:28px 12px; }
+
+  .dev-head { display:flex; align-items:center; gap:8px; }
+  .dev-name { font-weight:650; overflow-wrap:anywhere; background:none; border:0; padding:0; cursor:pointer; text-align:start; }
+  .dev-mac  { color:var(--muted); font-size:.75rem; font-variant-numeric:tabular-nums; direction:ltr; text-align:start; }
+  .tags { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 0; min-height:22px; }
+  .tag { font-size:.7rem; padding:2px 8px; border-radius:999px; }
+  .tag.blocked { background:color-mix(in srgb, var(--red) 20%, transparent); color:var(--red); }
+  .tag.wl      { background:color-mix(in srgb, var(--green) 20%, transparent); color:var(--green); }
+  .tag.off     { background:var(--surface2); color:var(--muted); }
+
+  .bar { height:10px; background:var(--surface2); border-radius:999px; overflow:hidden; margin:12px 0 6px; }
+  .bar > i { display:block; height:100%; background:var(--blue); border-radius:999px; transition:width .4s; }
+  .bar > i.warn { background:var(--amber); }
+  .bar > i.full { background:var(--red); }
+  .bar > i.free { background:var(--green); }
+  .usage { display:flex; justify-content:space-between; font-size:.8rem; color:var(--muted); }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
+
+  .log { max-height:260px; overflow:auto; font-size:.82rem; direction:ltr; text-align:start; }
+  .log div { display:flex; gap:10px; padding:5px 0; border-bottom:1px solid var(--line); }
+  .log div:last-child { border:0; }
+  .log .ip { color:var(--muted); min-width:104px; font-variant-numeric:tabular-nums; }
+  .log .age { color:var(--muted); margin-inline-start:auto; white-space:nowrap; }
+
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  input { background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:9px 11px; width:100%; }
+  .row input { flex:1; min-width:140px; width:auto; }
+  .result { margin-top:10px; font-size:.88rem; min-height:1.3em; }
+
+  .form { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-bottom:14px; }
+  label.f { display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted); }
+
+  dialog { background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:var(--radius);
+           padding:18px; width:min(92vw,360px); }
+  dialog::backdrop { background:rgba(0,0,0,.55); }
+  dialog form { display:grid; gap:12px; }
+  dialog .row { justify-content:flex-end; }
+
+  #toast { position:fixed; inset-inline:0; bottom:18px; display:flex; justify-content:center; pointer-events:none; }
+  #toast span { background:var(--text); color:var(--bg); padding:9px 16px; border-radius:999px; font-size:.85rem;
+                opacity:0; transform:translateY(8px); transition:.2s; }
+  #toast span.show { opacity:1; transform:none; }
+
+  footer { margin-top:28px; text-align:center; color:var(--muted); font-size:.75rem; }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 </style>
 </head>
 <body>
-  <h1>ESP32 WiFi Repeater</h1>
+<div class="wrap">
 
-  <div id="devices" class="grid"></div>
-
-  <div class="section">
-    <h2>Domains (live)</h2>
-    <div id="dnsLog" class="dns-log card"></div>
-  </div>
-
-  <div class="section card">
-    <h2>Ping</h2>
-    <div class="ping-row">
-      <input id="pingHost" placeholder="8.8.8.8 or example.com" value="8.8.8.8">
-      <button onclick="runPing()">Ping</button>
+  <header>
+    <div class="grow">
+      <h1 data-i18n="title">ESP32 WiFi Repeater</h1>
+      <div class="sub" id="subtitle"></div>
     </div>
-    <div id="pingResult"></div>
+    <span class="pill" id="linkPill"><i class="dot" id="linkDot"></i><span id="linkText"></span></span>
+    <button class="btn" id="langBtn" type="button" aria-label="Language">العربية</button>
+  </header>
+
+  <div class="banner" id="pwBanner" hidden data-i18n="defaultPw"></div>
+
+  <div class="stats">
+    <div class="card stat"><div class="label" data-i18n="devicesOnline">Devices online</div><div class="value" id="sOnline">-</div><div class="hint" id="sOnlineHint"></div></div>
+    <div class="card stat"><div class="label" data-i18n="usedToday">Used today</div><div class="value" id="sTotal">-</div><div class="hint" data-i18n="allDevices">all devices</div></div>
+    <div class="card stat"><div class="label" data-i18n="upstream">Upstream WiFi</div><div class="value" id="sUp">-</div><div class="hint" id="sUpHint"></div></div>
+    <div class="card stat"><div class="label" data-i18n="system">System</div><div class="value" id="sUptime">-</div><div class="hint" id="sHeap"></div></div>
   </div>
 
-  <div class="section card">
-    <h2>Settings</h2>
-    <div class="settings-grid">
-      <label>Home WiFi SSID (upstream)
-        <input id="staSsid" placeholder="leave blank to keep current">
-      </label>
-      <label>Home WiFi Password
-        <input id="staPass" type="password" placeholder="leave blank to keep current">
-      </label>
-      <label>Repeater name (AP SSID)
-        <input id="apSsid" placeholder="leave blank to keep current">
-      </label>
-      <label>Repeater Password
-        <input id="apPass" type="password" placeholder="leave blank to keep current">
-      </label>
-      <label>Telegram Bot Token
-        <input id="tgToken" placeholder="leave blank to keep current">
-      </label>
-      <label>Telegram Chat ID
-        <input id="tgChat" placeholder="leave blank to keep current">
-      </label>
+  <section>
+    <h2 data-i18n="devices">Devices</h2>
+    <div id="devices" class="grid"></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="domains">Domains (live)</h2>
+    <div id="dnsLog" class="log"></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="ping">Ping</h2>
+    <div class="row">
+      <input id="pingHost" value="8.8.8.8" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="8.8.8.8 / example.com">
+      <button class="btn primary" id="pingBtn" type="button" data-i18n="run">Run</button>
     </div>
-    <button onclick="saveSettings()">Save & Reboot</button>
-    <div id="settingsStatus" class="meta"></div>
-  </div>
+    <div class="result" id="pingResult" aria-live="polite"></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings">Settings</h2>
+    <p class="sub" data-i18n="settingsHint" style="margin-top:-6px"></p>
+    <div class="form">
+      <label class="f"><span data-i18n="staSsid">Home WiFi name (upstream)</span><input id="staSsid" maxlength="32" autocomplete="off"></label>
+      <label class="f"><span data-i18n="staPass">Home WiFi password</span><input id="staPass" type="password" maxlength="63" autocomplete="new-password"></label>
+      <label class="f"><span data-i18n="apSsid">Repeater name</span><input id="apSsid" maxlength="32" autocomplete="off"></label>
+      <label class="f"><span data-i18n="apPass">Repeater password</span><input id="apPass" type="password" maxlength="63" autocomplete="new-password"></label>
+      <label class="f"><span data-i18n="adminPass">Dashboard password</span><input id="adminPass" type="password" maxlength="64" autocomplete="new-password"></label>
+      <label class="f"><span data-i18n="tgToken">Telegram bot token</span><input id="tgToken" autocomplete="off"></label>
+      <label class="f"><span data-i18n="tgChat">Telegram chat ID</span><input id="tgChat" inputmode="numeric" autocomplete="off"></label>
+    </div>
+    <button class="btn primary" id="saveBtn" type="button" data-i18n="saveReboot">Save &amp; reboot</button>
+    <div class="result" id="settingsStatus" aria-live="polite"></div>
+  </section>
+
+  <footer id="footer"></footer>
+</div>
+
+<dialog id="limitDlg">
+  <form method="dialog" id="limitForm">
+    <h2 id="limitTitle"></h2>
+    <label class="f"><span data-i18n="limitLabel">Daily limit in MB (0 = unlimited)</span>
+      <input id="limitInput" type="number" min="0" max="10000000" step="1" inputmode="numeric" required></label>
+    <div class="row">
+      <button class="btn" value="cancel" type="button" id="limitCancel" data-i18n="cancel">Cancel</button>
+      <button class="btn primary" value="ok" data-i18n="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="nameDlg">
+  <form method="dialog" id="nameForm">
+    <h2 data-i18n="rename">Device name</h2>
+    <label class="f"><span data-i18n="nameHint">Only stored in this browser</span>
+      <input id="nameInput" maxlength="32" autocomplete="off"></label>
+    <div class="row">
+      <button class="btn" type="button" id="nameCancel" data-i18n="cancel">Cancel</button>
+      <button class="btn primary" value="ok" data-i18n="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"><span></span></div>
 
 <script>
-let ws;
-function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onmessage = (ev) => render(JSON.parse(ev.data));
-  ws.onclose = () => setTimeout(connect, 2000);
-}
-connect();
+'use strict';
+// ---------------------------------------------------------------- i18n ----
+const I18N = {
+  en: {
+    title:'ESP32 WiFi Repeater', devicesOnline:'Devices online', usedToday:'Used today', allDevices:'all devices',
+    upstream:'Upstream WiFi', system:'System', devices:'Devices', domains:'Domains (live)', ping:'Ping', run:'Run',
+    settings:'Settings', settingsHint:'Leave a field empty to keep its current value. Saving a change reboots the repeater.',
+    staSsid:'Home WiFi name (upstream)', staPass:'Home WiFi password', apSsid:'Repeater name', apPass:'Repeater password',
+    adminPass:'Dashboard password', tgToken:'Telegram bot token', tgChat:'Telegram chat ID', saveReboot:'Save & reboot',
+    cancel:'Cancel', save:'Save', limitLabel:'Daily limit in MB (0 = unlimited)', rename:'Device name', nameHint:'Only stored in this browser',
+    defaultPw:'You are still using the default dashboard password. Anyone on the repeater can change your settings. Set a new one in Settings.',
+    connected:'Connected', offline:'Offline', connecting:'Connecting...', live:'Live', noDevices:'No devices yet. Connect a phone to the repeater and it will show up here.',
+    noDns:'No lookups yet.', block:'Block', unblock:'Unblock', whitelist:'Whitelist', unwhitelist:'Remove whitelist', setLimit:'Set limit',
+    blocked:'Blocked', whitelisted:'Whitelist', online:'Online', offlineTag:'Offline', unlimited:'Unlimited', today:'today', of:'of',
+    ok:'Done', failed:'Failed', pinging:'Pinging...', pingRes:(r)=>`${r.received}/${r.sent} replies, ${r.lossPct}% loss, avg ${r.avgMs} ms`,
+    saving:'Saving...', rebooting:'Rebooting... reconnecting in a few seconds', uptime:'up', free:'free', ago:'ago', counting:'Traffic counting is OFF',
+    tracked:'tracked', telegramOn:'Telegram on', telegramOff:'Telegram off', ch:'channel', unreachable:'Lost contact with the repeater',
+  },
+  ar: {
+    title:'ريبيتر ESP32', devicesOnline:'أجهزة متصلة', usedToday:'المستخدم اليوم', allDevices:'كل الأجهزة',
+    upstream:'الشبكة الأساسية', system:'النظام', devices:'الأجهزة', domains:'النطاقات (مباشر)', ping:'اختبار Ping', run:'تشغيل',
+    settings:'الإعدادات', settingsHint:'اترك أي حقل فارغًا ليبقى كما هو. حفظ أي تغيير يعيد تشغيل الريبيتر.',
+    staSsid:'اسم شبكة البيت (الأساسية)', staPass:'باسورد شبكة البيت', apSsid:'اسم الريبيتر', apPass:'باسورد الريبيتر',
+    adminPass:'باسورد لوحة التحكم', tgToken:'توكن بوت تليجرام', tgChat:'معرّف محادثة تليجرام', saveReboot:'حفظ وإعادة تشغيل',
+    cancel:'إلغاء', save:'حفظ', limitLabel:'الحد اليومي بالميجابايت (0 = بلا حد)', rename:'اسم الجهاز', nameHint:'يُحفظ في هذا المتصفح فقط',
+    defaultPw:'ما زلت تستخدم باسورد لوحة التحكم الافتراضي. أي شخص على الريبيتر يقدر يغيّر إعداداتك. اختر باسورد جديد من الإعدادات.',
+    connected:'متصل', offline:'غير متصل', connecting:'جارٍ الاتصال...', live:'مباشر', noDevices:'لا توجد أجهزة بعد. اربط هاتفًا بالريبيتر وسيظهر هنا.',
+    noDns:'لا توجد استعلامات بعد.', block:'حظر', unblock:'إلغاء الحظر', whitelist:'قائمة بيضاء', unwhitelist:'إزالة من البيضاء', setLimit:'تحديد الحد',
+    blocked:'محظور', whitelisted:'قائمة بيضاء', online:'متصل', offlineTag:'غير متصل', unlimited:'بلا حد', today:'اليوم', of:'من',
+    ok:'تم', failed:'فشل', pinging:'جارٍ الاختبار...', pingRes:(r)=>`${r.received}/${r.sent} ردود، فقد ${r.lossPct}%، متوسط ${r.avgMs} م.ث`,
+    saving:'جارٍ الحفظ...', rebooting:'جارٍ إعادة التشغيل... سيعاد الاتصال خلال ثوانٍ', uptime:'يعمل منذ', free:'متاح', ago:'منذ', counting:'عدّ الاستهلاك متوقف',
+    tracked:'مسجّل', telegramOn:'تليجرام يعمل', telegramOff:'تليجرام متوقف', ch:'قناة', unreachable:'انقطع الاتصال بالريبيتر',
+  }
+};
+let lang = (navigator.language || '').toLowerCase().startsWith('ar') ? 'ar' : 'en';
+try { const saved = localStorage.getItem('lang'); if (saved === 'ar' || saved === 'en') lang = saved; } catch(e) {}
+const t = (k) => (I18N[lang][k] ?? I18N.en[k] ?? k);
 
-function fmtMB(bytes) { return (bytes / (1024*1024)).toFixed(0); }
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.documentElement.dir  = lang === 'ar' ? 'rtl' : 'ltr';
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.getElementById('langBtn').textContent = lang === 'ar' ? 'English' : 'العربية';
+  lastKey = ''; if (last) render(last);
+}
+
+// ------------------------------------------------------------- helpers ----
+const $ = (id) => document.getElementById(id);
+// Build DOM nodes without innerHTML: every value (MACs, domain names...) goes in as text.
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return el;
+}
+// Numbers + units stay left-to-right even inside Arabic text (LRI ... PDI isolate).
+const ltr = (s) => '\u2066' + s + '\u2069';
+function bytes(n) {
+  if (n < 1048576) return ltr((n / 1024).toFixed(0) + ' KB');
+  if (n < 1073741824) return ltr((n / 1048576).toFixed(0) + ' MB');
+  return ltr((n / 1073741824).toFixed(2) + ' GB');
+}
+function dur(s) {
+  const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return ltr(d ? `${d}d ${hh}h` : hh ? `${hh}h ${m}m` : `${m}m`);
+}
+let toastTimer;
+function toast(msg) {
+  const el = $('toast').firstElementChild;
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+// All requests carry X-Requested-With: the firmware rejects POSTs without it (anti-CSRF).
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'X-Requested-With': 'dashboard', ...(opts.headers || {}) } });
+  if (res.status === 401) { location.reload(); throw new Error('auth'); }
+  return res;
+}
+const post = (path, data) => api(path, { method: 'POST', body: new URLSearchParams(data) });
+
+// Names are local to this browser; the firmware only knows MAC addresses.
+let names = {};
+try { names = JSON.parse(localStorage.getItem('names') || '{}'); } catch(e) {}
+const saveNames = () => { try { localStorage.setItem('names', JSON.stringify(names)); } catch(e) {} };
+
+// ------------------------------------------------------------- render -----
+let last = null, lastKey = '';
+
+async function act(path, data, okMsg) {
+  try {
+    const r = await post(path, data);
+    toast(r.ok ? (okMsg || t('ok')) : (await r.text()) || t('failed'));
+  } catch(e) { if (e.message !== 'auth') toast(t('failed')); }
+  refreshOnce();
+}
+
+function deviceCard(d) {
+  const used = d.bytesToday, limit = d.limitMB * 1048576;
+  const unlimited = d.limitMB === 0 || d.whitelisted;
+  const pct = unlimited ? 0 : Math.min(100, used / limit * 100);
+  const cls = unlimited ? 'free' : pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
+  const name = names[d.mac];
+
+  const title = h('button', { class: 'dev-name', type: 'button', title: d.mac, onclick: () => renameDevice(d.mac) }, name || d.mac);
+  return h('div', { class: 'card' },
+    h('div', { class: 'dev-head' }, h('i', { class: 'dot' + (d.online ? ' ok' : '') }), title),
+    name ? h('div', { class: 'dev-mac' }, d.mac) : null,
+    h('div', { class: 'tags' },
+      d.blocked ? h('span', { class: 'tag blocked' }, t('blocked')) : null,
+      d.whitelisted ? h('span', { class: 'tag wl' }, t('whitelisted')) : null,
+      !d.online ? h('span', { class: 'tag off' }, t('offlineTag')) : null),
+    h('div', { class: 'bar' }, h('i', { class: cls, style: `width:${unlimited ? 100 : pct}%` })),
+    h('div', { class: 'usage' },
+      h('span', {}, `${bytes(used)} ${t('today')}`),
+      h('span', {}, unlimited ? t('unlimited') : `${t('of')} ${bytes(limit)}`)),
+    h('div', { class: 'actions' },
+      d.blocked
+        ? h('button', { class: 'btn ok', type: 'button', onclick: () => act('/api/unblock', { mac: d.mac }) }, t('unblock'))
+        : h('button', { class: 'btn danger', type: 'button', onclick: () => act('/api/block', { mac: d.mac }) }, t('block')),
+      h('button', { class: 'btn', type: 'button', onclick: () => act('/api/whitelist', { mac: d.mac, enabled: d.whitelisted ? 0 : 1 }) },
+        d.whitelisted ? t('unwhitelist') : t('whitelist')),
+      h('button', { class: 'btn', type: 'button', onclick: () => openLimit(d) }, t('setLimit'))));
+}
 
 function render(data) {
-  const grid = document.getElementById('devices');
-  grid.innerHTML = '';
-  (data.devices || []).forEach(d => {
-    const usedMB = fmtMB(d.bytesToday);
-    const pct = Math.min(100, (usedMB / d.limitMB) * 100);
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="mac">${d.mac}</div>
-      <div class="tags">
-        ${d.blocked ? '<span class="tag-blocked">Blocked</span>' : ''}
-        ${d.whitelisted ? '<span class="tag-wl">Whitelist</span>' : ''}
-      </div>
-      <div class="bar-bg"><div class="bar-fill ${pct>90?'danger':''}" style="width:${pct}%"></div></div>
-      <div class="meta">${usedMB} / ${d.limitMB} MB today</div>
-      <div class="actions">
-        ${d.blocked
-          ? `<button onclick="call('unblock','${d.mac}')">Unblock</button>`
-          : `<button onclick="call('block','${d.mac}')">Block</button>`}
-        <button onclick="call('whitelist','${d.mac}', d.whitelisted?0:1)">
-          ${d.whitelisted ? 'Remove whitelist' : 'Whitelist'}
-        </button>
-        <button onclick="setLimit('${d.mac}')">Set limit</button>
-      </div>`;
-    grid.appendChild(card);
-  });
+  last = data;
+  const s = data.sys || {}, devs = data.devices || [];
 
-  const dnsBox = document.getElementById('dnsLog');
-  dnsBox.innerHTML = (data.dns || []).slice().reverse()
-    .map(e => `<div>${e.ip} → ${e.domain}</div>`).join('');
+  // Header
+  $('subtitle').textContent = s.apSsid ? `${s.apSsid} · ${s.apIp}` : '';
+  $('linkDot').className = 'dot ok'; $('linkText').textContent = t('live');
+  $('pwBanner').hidden = !s.defaultPassword;
+  $('footer').textContent = `v${s.version || '?'}  ·  ${s.telegram ? t('telegramOn') : t('telegramOff')}` +
+                            (s.counting === false ? `  ·  ${t('counting')}` : '');
+
+  // Stat tiles
+  const online = devs.filter(d => d.online).length;
+  $('sOnline').textContent = online;
+  $('sOnlineHint').textContent = `${devs.length} ${t('tracked')}`;
+  $('sTotal').textContent = bytes(devs.reduce((a, d) => a + d.bytesToday, 0));
+  $('sUp').textContent = s.upstream ? t('connected') : t('offline');
+  $('sUpHint').textContent = s.upstream ? `${ltr(s.staSsid)} · ${ltr(s.rssi + ' dBm')} · ${t('ch')} ${s.channel}` : (s.staSsid || '');
+  $('sUptime').textContent = `${t('uptime')} ${dur(s.uptime || 0)}`;
+  $('sHeap').textContent = `${ltr(((s.heap || 0) / 1024).toFixed(0) + ' KB')} ${t('free')}`;
+
+  // Re-render the lists only when something changed, so open dialogs/focus are not disturbed.
+  const key = lang + JSON.stringify([devs, (data.dns || []).map(e => [e.ip, e.domain])]) + JSON.stringify(names);
+  if (key === lastKey) return;
+  lastKey = key;
+
+  const grid = $('devices');
+  grid.replaceChildren(...(devs.length ? devs.map(deviceCard) : [h('div', { class: 'empty card' }, t('noDevices'))]));
+
+  const log = $('dnsLog');
+  const dns = data.dns || [];
+  log.replaceChildren(...(dns.length ? dns.map(e => h('div', {},
+      h('span', { class: 'ip' }, e.ip), h('span', {}, e.domain), h('span', { class: 'age' }, `${e.ageSec}s`)))
+    : [h('div', { class: 'empty' }, t('noDns'))]));
 }
 
-function call(action, mac, enabled) {
-  const body = new URLSearchParams({ mac });
-  if (enabled !== undefined) body.append('enabled', enabled);
-  fetch(`/api/${action}`, { method: 'POST', body });
+// ----------------------------------------------------------- transport ----
+let ws, wsOk = false, pollTimer;
+function connect() {
+  try {
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  } catch(e) { startPolling(); return; }
+  ws.onopen    = () => { wsOk = true; stopPolling(); };
+  ws.onmessage = (ev) => { try { render(JSON.parse(ev.data)); } catch(e) {} };
+  ws.onclose   = () => { wsOk = false; setOffline(); startPolling(); setTimeout(connect, 3000); };
 }
-
-function setLimit(mac) {
-  const mb = prompt('Daily limit in MB for ' + mac, '1024');
-  if (!mb) return;
-  fetch('/api/setLimit', { method:'POST', body: new URLSearchParams({ mac, mb }) });
+function setOffline() { $('linkDot').className = 'dot bad'; $('linkText').textContent = t('offline'); }
+async function refreshOnce() {
+  try { render(await (await api('/api/status')).json()); } catch(e) { if (e.message !== 'auth') setOffline(); }
 }
+function startPolling() { if (!pollTimer) pollTimer = setInterval(() => { if (!wsOk) refreshOnce(); }, 3000); }
+function stopPolling()  { clearInterval(pollTimer); pollTimer = null; }
 
-function runPing() {
-  const host = document.getElementById('pingHost').value;
-  document.getElementById('pingResult').textContent = 'Pinging...';
-  fetch(`/api/ping?host=${encodeURIComponent(host)}`)
-    .then(r => r.json())
-    .then(r => document.getElementById('pingResult').textContent =
-      `${r.sent} sent, ${r.received} received, ${r.lossPct}% loss, avg ${r.avgMs}ms`);
+// -------------------------------------------------------------- dialogs ---
+let limitMac = '';
+function openLimit(d) {
+  limitMac = d.mac;
+  $('limitTitle').textContent = names[d.mac] || d.mac;
+  $('limitInput').value = d.limitMB;
+  $('limitDlg').showModal();
 }
+$('limitCancel').onclick = () => $('limitDlg').close();
+$('limitForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const mb = $('limitInput').value;
+  $('limitDlg').close();
+  act('/api/setLimit', { mac: limitMac, mb });
+});
 
-function loadSettings() {
-  fetch('/api/settings')
-    .then(r => r.json())
-    .then(s => {
-      document.getElementById('staSsid').placeholder = s.sta_ssid ? `current: ${s.sta_ssid}` : 'leave blank to keep current';
-      document.getElementById('apSsid').placeholder = s.ap_ssid ? `current: ${s.ap_ssid}` : 'leave blank to keep current';
+let nameMac = '';
+function renameDevice(mac) { nameMac = mac; $('nameInput').value = names[mac] || ''; $('nameDlg').showModal(); }
+$('nameCancel').onclick = () => $('nameDlg').close();
+$('nameForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = $('nameInput').value.trim();
+  if (v) names[nameMac] = v; else delete names[nameMac];
+  saveNames(); $('nameDlg').close(); lastKey = ''; if (last) render(last);
+});
+
+// ----------------------------------------------------------------- ping ---
+let pingPoll;
+$('pingBtn').onclick = async () => {
+  const out = $('pingResult'), btn = $('pingBtn');
+  out.textContent = t('pinging'); btn.disabled = true;
+  try {
+    const r = await post('/api/ping', { host: $('pingHost').value.trim() });
+    if (!r.ok) { out.textContent = await r.text(); btn.disabled = false; return; }
+    clearInterval(pingPoll);
+    let tries = 0;
+    pingPoll = setInterval(async () => {
+      tries++;
+      try {
+        const j = await (await api('/api/ping')).json();
+        if (j.state === 'done')  { out.textContent = `${j.host}: ${t('pingRes')(j)}`; done(); }
+        else if (j.state === 'error') { out.textContent = `${t('failed')}: ${j.error}`; done(); }
+        else if (tries > 20) { out.textContent = t('failed'); done(); }
+      } catch(e) { done(); }
+    }, 600);
+  } catch(e) { btn.disabled = false; }
+  function done() { clearInterval(pingPoll); btn.disabled = false; }
+};
+
+// ------------------------------------------------------------- settings ---
+async function loadSettings() {
+  try {
+    const s = await (await api('/api/settings')).json();
+    $('staSsid').placeholder = s.sta_ssid || '';
+    $('apSsid').placeholder  = s.ap_ssid || '';
+  } catch(e) {}
+}
+$('saveBtn').onclick = async () => {
+  const out = $('settingsStatus');
+  out.textContent = t('saving');
+  try {
+    const r = await post('/api/settings', {
+      sta_ssid: $('staSsid').value.trim(), sta_password: $('staPass').value,
+      ap_ssid: $('apSsid').value.trim(),   ap_password: $('apPass').value,
+      admin_password: $('adminPass').value,
+      tg_token: $('tgToken').value.trim(), tg_chat_id: $('tgChat').value.trim(),
     });
-}
+    const text = await r.text();
+    out.textContent = text;
+    if (r.ok && text.includes('rebooting')) {
+      out.textContent = t('rebooting');
+      setTimeout(() => location.reload(), 9000);
+    }
+  } catch(e) { if (e.message !== 'auth') out.textContent = t('failed'); }
+};
+
+// ----------------------------------------------------------------- init ---
+$('langBtn').onclick = () => {
+  lang = lang === 'ar' ? 'en' : 'ar';
+  try { localStorage.setItem('lang', lang); } catch(e) {}
+  applyLang();
+};
+$('linkText').textContent = t('connecting');
+applyLang();
 loadSettings();
-
-function saveSettings() {
-  const body = new URLSearchParams({
-    sta_ssid: document.getElementById('staSsid').value,
-    sta_password: document.getElementById('staPass').value,
-    ap_ssid: document.getElementById('apSsid').value,
-    ap_password: document.getElementById('apPass').value,
-    tg_token: document.getElementById('tgToken').value,
-    tg_chat_id: document.getElementById('tgChat').value,
-  });
-  document.getElementById('settingsStatus').textContent = 'Saving...';
-  fetch('/api/settings', { method: 'POST', body })
-    .then(r => r.text())
-    .then(t => {
-      document.getElementById('settingsStatus').textContent = t;
-      if (t.includes('rebooting')) {
-        setTimeout(() => location.reload(), 9000);
-      }
-    });
-}
+refreshOnce();
+connect();
 </script>
 </body>
 </html>
