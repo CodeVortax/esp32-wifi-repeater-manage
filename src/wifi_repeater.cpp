@@ -6,6 +6,7 @@
 
 extern "C" {
   #include "lwip/lwip_napt.h"
+  #include "lwip/tcpip.h"        // LOCK_TCPIP_CORE / UNLOCK_TCPIP_CORE
 }
 
 static volatile bool staConnected = false;
@@ -57,7 +58,12 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
                       WiFi.localIP().toString().c_str(), WiFi.channel());
         // Enabling NAPT here (not once at boot) means the repeater also comes
         // up when the router is slow to answer, and again after a reconnect.
+        // This handler runs in the Wi-Fi event task, not the lwIP task. lwIP is built with core locking,
+        // and touching its timers without the lock trips an assert and reboots the chip (a boot loop
+        // right after the router connects). Take the lock around the call.
+        LOCK_TCPIP_CORE();
         ip_napt_enable((uint32_t)WiFi.softAPIP(), 1);
+        UNLOCK_TCPIP_CORE();
         Serial.println("[NAT] NAPT enabled - repeater is live");
         break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:

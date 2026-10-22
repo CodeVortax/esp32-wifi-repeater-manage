@@ -213,7 +213,7 @@ static void saveToNvs(int32_t dayKey) {
 
 static int32_t loadFromNvs() {
     Preferences p;
-    p.begin(NVS_QUOTA_NAMESPACE, true);
+    p.begin(NVS_QUOTA_NAMESPACE, false);     // read-write so a first boot does not log "nvs_open failed: NOT_FOUND"
     int32_t day = -1;
     if (p.getUChar("ver", 0) == PERSIST_VERSION) {
         day = p.getInt("day", -1);
