@@ -2,6 +2,27 @@
 
 Versions follow `FW_VERSION` in `include/config.h`. All releases are betas.
 
+## 0.4.0-beta
+
+### Added
+- **Ad, tracker and site blocking by DNS.** A built-in list of 6,572 names (Peter Lowe + AdAway, plus a few seen on real phones) costs only 18 KB of flash (hash set, Golomb-Rice coded, no RAM). Add your own with a **hosts file** (`0.0.0.0 example.com`, `||example.com^`, plain names, `@@example.com` to always allow) or the one-tap Block buttons. Blocked names get `0.0.0.0` straight from the repeater. The file is kept in NVS, so a dashboard update never deletes it. Regenerate the list with `python3 scripts/gen_blocklist.py`; CI checks that it is current.
+- **DNS provider**: router (default), Cloudflare, Cloudflare Security / Family, Google, Quad9, AdGuard, AdGuard Family, OpenDNS FamilyShield, CleanBrowsing Family, or two custom addresses. If the first server is silent the second is used.
+- **Usage by hour** for each user and for everybody, and **when each app was used** (hours in which it moved at least 64 KB). Saved every 10 minutes.
+- **Most used sites** per user today (by lookups, grouped by site).
+- **Internet off** for everybody, like unplugging the WAN (the dashboard and trusted devices keep working).
+- **Memory and storage** on the System page: RAM, firmware slot, dashboard files, saved data.
+- **WiFi range** settings: transmit power level, 20 MHz channels on both sides. Per-user signal strength on the Users page.
+
+### Fail-safes
+- A repair page (sign in + upload) is shown when the dashboard files are missing or damaged.
+- Counter saves that fail (flash full or worn) are retried, counted and shown as a warning.
+- Hosts file and uploads are checked against free space and memory before they are written; the old file stays if anything fails.
+- If RAM stays critically low for a minute the repeater saves its counters and restarts.
+
+### Fixed
+- Traffic to addresses shared by thousands of sites (Cloudflare, Fastly) was credited to whichever app asked last, which inflated "AI assistants" and "Other music". Those addresses are no longer remembered, so that traffic shows as Other.
+- Phone-maker, clock and connectivity-check names (Oppo/Realme, MediaTek, NTP, Android time) are recognised instead of landing in Other.
+
 ## 0.3.0-beta
 
 ### Added

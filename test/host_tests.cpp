@@ -2,6 +2,10 @@
 #include "apps.h"
 #include "dns_parse.h"
 #include "shaper.h"
+#include "adblock.h"
+#include "blocklist_data.h"
+#include <fstream>
+#include <random>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -224,12 +228,212 @@ static void testShaper() {
     CHECK(bucket_burst(1000) == 8192 && bucket_burst(4000000) == 1000000);
 }
 
+
+static void testSeenOnPhones() {
+    // names from a real Oppo/Realme phone that used to land in "Other"
+    CHECK_APP("icosa-service-sg.allawnos.com", APP_PHONEUPDATE);
+    CHECK_APP("mdp-appconf-eg.heytapdl.com", APP_PHONEUPDATE);
+    CHECK_APP("uc-track-gl.heytapmobi.com", APP_PHONEUPDATE);
+    CHECK_APP("sgepodownload.mediatek.com", APP_PHONEUPDATE);
+    CHECK_APP("2.android.pool.ntp.org", APP_SYSTEM);
+    CHECK_APP("pool.ntp.org", APP_SYSTEM);
+    CHECK_APP("time.android.com", APP_SYSTEM);
+    CHECK_APP("connectivitycheck.gstatic.com", APP_SYSTEM);
+    CHECK_APP("www.gstatic.com", APP_GOOGLE);
+    CHECK_APP("ohttp-relay-safebrowsing-android.google.fastly-edge.com", APP_GOOGLE);
+    CHECK_APP("www.google.us", APP_GOOGLE);
+    CHECK_APP("tags.tiqcdn.com", APP_ADS);
+    CHECK_APP("beacon.taboola.com", APP_ADS);
+    // shared CDN addresses are never remembered, so they cannot be credited to the wrong app
+    apps_cacheClear();
+    apps_cachePut(ip4(104, 18, 5, 5), APP_AI, 10);              // Cloudflare
+    apps_cachePut(ip4(151, 101, 1, 1), APP_OTHERMUSIC, 10);     // Fastly
+    CHECK(apps_lookupIp(ip4(104, 18, 5, 5), 10) == APP_OTHER);
+    CHECK(apps_lookupIp(ip4(151, 101, 1, 1), 10) == APP_OTHER);
+    apps_cachePut(ip4(31, 13, 70, 1), APP_FACEBOOK, 10);        // not shared
+    CHECK(apps_lookupIp(ip4(31, 13, 70, 1), 10) == APP_FACEBOOK);
+    CHECK(apps_lookupIp(ip4(149, 154, 167, 50), 10) == APP_TELEGRAM);   // fixed ranges still work
+}
+
+static void testBaseDomain() {
+    char b[64];
+    dns_baseDomain("rr3---sn-p5qlsn7e.googlevideo.com", b, sizeof(b)); CHECK(strcmp(b, "googlevideo.com") == 0);
+    dns_baseDomain("www.example.co.uk", b, sizeof(b));               CHECK(strcmp(b, "example.co.uk") == 0);
+    dns_baseDomain("a.b.example.com.eg", b, sizeof(b));              CHECK(strcmp(b, "example.com.eg") == 0);
+    dns_baseDomain("example.com", b, sizeof(b));                     CHECK(strcmp(b, "example.com") == 0);
+    dns_baseDomain("graph.facebook.com", b, sizeof(b));              CHECK(strcmp(b, "facebook.com") == 0);
+    dns_baseDomain("localhost", b, sizeof(b));                       CHECK(strcmp(b, "localhost") == 0);
+    dns_baseDomain("co.uk", b, sizeof(b));                           CHECK(strcmp(b, "co.uk") == 0);
+    dns_baseDomain("a.google.us", b, sizeof(b));                     CHECK(strcmp(b, "google.us") == 0);
+    char tiny[6];
+    dns_baseDomain("www.example.com", tiny, sizeof(tiny));           CHECK(strlen(tiny) <= 5);
+}
+
+// ---- ad blocking -------------------------------------------------------------------------
+static AdVerdict verdictOf(const char *d, const UserLists &u, bool on = true) {
+    return adblock_verdict(d, u, on, BLOCKLIST_DATA, BLOCKLIST_BYTES);
+}
+
+static void testBlocklist() {
+    UserLists none;
+    // every name the generator wrote must be found (this checks the Python encoder against the C++ decoder)
+    std::ifstream f("../blocklist/compiled-names.txt");
+    std::string line; int total = 0, missing = 0;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        total++;
+        if (!blocklist_contains(BLOCKLIST_DATA, BLOCKLIST_BYTES, adblock_hash64(line.data(), line.size()))) {
+            if (missing++ < 5) printf("  missing: %s\n", line.c_str());
+        }
+    }
+    printf("  built-in list: %d names in %zu bytes (%.2f B/name), %d missing\n", total, (size_t)BLOCKLIST_BYTES, (double)BLOCKLIST_BYTES / total, missing);
+    CHECK(total > 3000);
+    CHECK(missing == 0);
+    CHECK(blocklist_count(BLOCKLIST_DATA, BLOCKLIST_BYTES) > 3000);
+
+    // children and known trackers
+    CHECK(verdictOf("doubleclick.net", none) == AB_LIST);
+    CHECK(verdictOf("ad.doubleclick.net", none) == AB_LIST);
+    CHECK(verdictOf("x.y.z.doubleclick.net", none) == AB_LIST);
+    CHECK(verdictOf("tags.tiqcdn.com", none) == AB_LIST);
+    CHECK(verdictOf("beacon.taboola.com", none) == AB_LIST);
+    CHECK(verdictOf("ads.youtube.com", none) == AB_LIST);
+    CHECK(verdictOf("doubleclick.net", none, false) == AB_PASS);     // list switched off
+    CHECK(verdictOf("notdoubleclick.net", none) == AB_PASS);         // label boundary
+
+    // things that must never be blocked
+    const char *safe[] = {"www.google.com","www.googleapis.com","connectivitycheck.gstatic.com","www.youtube.com","rr3---sn.googlevideo.com",
+        "graph.facebook.com","www.facebook.com","scontent.xx.fbcdn.net","api.whatsapp.net","mmg.whatsapp.net","www.instagram.com","www.tiktok.com",
+        "app.snapchat.com","web.telegram.org","pool.ntp.org","time.android.com","www.netflix.com","open.spotify.com","play.googleapis.com",
+        "www.apple.com","www.microsoft.com","download.windowsupdate.com","github.com","raw.githubusercontent.com","www.wikipedia.org","www.reddit.com",
+        "discord.com","zoom.us","icosa-service-sg.allawnos.com","sgepodownload.mediatek.com","www.amazon.com"};
+    for (const char *d : safe) { checks++; if (verdictOf(d, none) != AB_PASS) { failures++; printf("FAIL blocked a good name: %s\n", d); } }
+
+    // false matches: random names that are not in the list
+    std::mt19937 rng(7);
+    int fp = 0, tries = 300000;
+    for (int i = 0; i < tries; i++) {
+        char name[40];
+        snprintf(name, sizeof(name), "h%08x.example%u.test", (unsigned)rng(), (unsigned)(rng() % 1000));
+        if (blocklist_contains(BLOCKLIST_DATA, BLOCKLIST_BYTES, adblock_hash64(name, strlen(name)))) fp++;
+    }
+    printf("  false matches: %d of %d (expected about %.2f)\n", fp, tries, tries / 1048576.0);
+    CHECK(fp <= 8);
+
+    // damaged data must not crash or match
+    uint8_t junk[64] = {'B','L',1, 5, 20, 64, 1,0,0,0, 1,0,0,0, 9,0};
+    CHECK(!blocklist_contains(junk, sizeof(junk), 12345));
+    CHECK(!blocklist_contains(BLOCKLIST_DATA, 10, 12345));
+    CHECK(!blocklist_contains(BLOCKLIST_DATA, 200, adblock_hash64("zzzz.invalid", 12)));
+}
+
+static void testHosts() {
+    const char *text =
+        "# my list\n"
+        "0.0.0.0 ads.example.com\n"
+        "127.0.0.1   Tracker.Example.NET   other.example.org  # two names\n"
+        "bare.example.com\n"
+        "||adblock.example.com^\n"
+        "@@good.ads.example.com\n"
+        "@@||fine.example.com^\n"
+        "! adblock comment\n"
+        "0.0.0.0 localhost\n"
+        "1.2.3.4\n"
+        "not a host!!\n"
+        "\n";
+    UserLists u; HostsStats st;
+    CHECK(hosts_parse(text, strlen(text), u, st));
+    printf("  hosts: %u block, %u allow, %u ignored\n", st.blocks, st.allows, st.ignored);
+    CHECK(st.blocks == 5);            // ads, tracker, other, bare, adblock
+    CHECK(st.allows == 2);
+    CHECK(st.ignored >= 2);
+    CHECK(verdictOf("ads.example.com", u) == AB_USER);
+    CHECK(verdictOf("deep.sub.ads.example.com", u) == AB_USER);        // children follow the parent
+    CHECK(verdictOf("tracker.example.net", u) == AB_USER);             // case folded
+    CHECK(verdictOf("other.example.org", u) == AB_USER);
+    CHECK(verdictOf("bare.example.com", u) == AB_USER);
+    CHECK(verdictOf("adblock.example.com", u) == AB_USER);
+    CHECK(verdictOf("good.ads.example.com", u) == AB_PASS);            // allow beats the parent's block
+    CHECK(verdictOf("x.good.ads.example.com", u) == AB_PASS);
+    CHECK(verdictOf("fine.example.com", u) == AB_PASS);
+    CHECK(verdictOf("example.com", u) == AB_PASS);
+    CHECK(verdictOf("localhost", u) == AB_PASS);
+    // allow also beats the built-in list
+    const char *al = "@@doubleclick.net\n";
+    UserLists u2; HostsStats st2;
+    CHECK(hosts_parse(al, strlen(al), u2, st2));
+    CHECK(verdictOf("ad.doubleclick.net", u2) == AB_PASS);
+    hosts_free(u2);
+    hosts_free(u);
+
+    // the caps
+    std::string big;
+    for (int i = 0; i < MAX_USER_BLOCKS + 50; i++) big += "0.0.0.0 host" + std::to_string(i) + ".example.com\n";
+    CHECK(hosts_parse(big.c_str(), big.size(), u, st));
+    CHECK(st.blocks == MAX_USER_BLOCKS && st.full);
+    hosts_free(u);
+    CHECK(hosts_parse("", 0, u, st) && st.blocks == 0);
+    hosts_free(u);
+}
+
+static void testSetRule() {
+    char out[512];
+    const char *t = "# mine\n0.0.0.0 a.example.com\n@@b.example.com\n";
+    size_t n = hosts_setRule(t, strlen(t), "c.example.com", 'b', out, sizeof(out));
+    CHECK(n > 0 && strstr(out, "0.0.0.0 c.example.com\n") && strstr(out, "# mine") && strstr(out, "a.example.com"));
+    char tiny[4];
+    CHECK(hosts_setRule(out, strlen(out), "a.example.com", 'a', tiny, sizeof(tiny)) == 0);   // does not fit
+    char o2[512];
+    n = hosts_setRule(t, strlen(t), "a.example.com", 'a', o2, sizeof(o2));      // block -> allow
+    CHECK(n > 0 && !strstr(o2, "0.0.0.0 a.example.com") && strstr(o2, "@@a.example.com"));
+    n = hosts_setRule(t, strlen(t), "b.example.com", 'r', o2, sizeof(o2));      // remove
+    CHECK(n > 0 && !strstr(o2, "b.example.com") && strstr(o2, "a.example.com"));
+    n = hosts_setRule("", 0, "z.example.com", 'b', o2, sizeof(o2));
+    CHECK(n > 0 && strcmp(o2, "0.0.0.0 z.example.com\n") == 0);
+    n = hosts_setRule("no-newline.example.com", 22, "q.example.com", 'b', o2, sizeof(o2));
+    CHECK(strcmp(o2, "no-newline.example.com\n0.0.0.0 q.example.com\n") == 0);
+    // setting the same rule twice keeps one line
+    char o3[512];
+    hosts_setRule(o2, strlen(o2), "q.example.com", 'b', o3, sizeof(o3));
+    CHECK(std::string(o3).find("q.example.com") == std::string(o3).rfind("q.example.com"));
+    CHECK(adblock_validHost("a-b.example.com") && !adblock_validHost("nodots") && !adblock_validHost("a..b.com") && !adblock_validHost("bad name.com") && !adblock_validHost(".x.com"));
+}
+
+static void testBlockedReply() {
+    std::vector<uint8_t> q = makeQuery("ads.example.com");
+    uint8_t out[512];
+    int n = dns_buildBlocked(q.data(), (int)q.size(), out, sizeof(out));
+    CHECK(n == (int)q.size() + 16);
+    CHECK(out[0] == q[0] && out[1] == q[1]);
+    CHECK((out[2] & 0x80) && (out[3] & 0x0F) == 0);                    // response, NOERROR
+    CHECK(out[7] == 1);                                                // one answer
+    CHECK(out[n - 6] == 0x00 && out[n - 5] == 0x04);                   // rdlength 4
+    CHECK(out[n - 4] == 0 && out[n - 3] == 0 && out[n - 2] == 0 && out[n - 1] == 0);   // 0.0.0.0
+    // AAAA -> no data
+    std::vector<uint8_t> q6 = q; q6[q6.size() - 3] = 28;
+    n = dns_buildBlocked(q6.data(), (int)q6.size(), out, sizeof(out));
+    CHECK(n == (int)q6.size() && out[7] == 0 && (out[3] & 0x0F) == 0);
+    // not a query / several questions / garbage
+    std::vector<uint8_t> r = q; r[2] |= 0x80;
+    CHECK(dns_buildBlocked(r.data(), (int)r.size(), out, sizeof(out)) == 0);
+    std::vector<uint8_t> two = q; two[5] = 2;
+    CHECK(dns_buildBlocked(two.data(), (int)two.size(), out, sizeof(out)) == 0);
+    CHECK(dns_buildBlocked(q.data(), 10, out, sizeof(out)) == 0);
+    CHECK(dns_buildBlocked(q.data(), (int)q.size(), out, 20) == 0);
+}
+
 int main() {
     testClassify();
     testCustomRules();
     testIpMemory();
     testDnsParse();
     testShaper();
+    testSeenOnPhones();
+    testBaseDomain();
+    testBlocklist();
+    testHosts();
+    testSetRule();
+    testBlockedReply();
     printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

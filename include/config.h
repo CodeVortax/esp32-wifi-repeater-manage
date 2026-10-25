@@ -1,6 +1,6 @@
 #pragma once
 
-#define FW_VERSION               "0.3.0-beta"
+#define FW_VERSION               "0.4.0-beta"
 
 // These are only the FIRST-BOOT defaults. After the first boot everything
 // below marked (NVS) lives in flash and is changed from the Settings page.
@@ -39,6 +39,13 @@
 // ---------------- App recognition ----------------
 #define MAX_CUSTOM_RULES         24
 #define UNKNOWN_DOMAIN_MAX       40
+
+// ---------------- Ad / site blocking ----------------
+// Your hosts file is kept in flash next to the settings (not in the dashboard files, so a
+// dashboard update never deletes it). Limits keep RAM and flash use small and predictable.
+#define MAX_USER_BLOCKS          1500        // names in your hosts file (6 KB of RAM while loaded)
+#define MAX_USER_ALLOWS          100
+#define HOSTS_FILE_MAX           12288       // bytes
 
 // ---------------- Updates over WiFi ----------------
 // After a firmware update the new version must stay up this long to count as

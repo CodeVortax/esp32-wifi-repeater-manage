@@ -60,6 +60,7 @@ Everything runs on the chip. There is no cloud, no account and no app to install
 
 - **Router-style dashboard** with a login screen: Overview, Users, Apps, Speed, Settings, System. Arabic / English, full right-to-left.
 - **Named users** ("User 1, 2 ..." and your own names) with usage per category and per app (YouTube, TikTok, Facebook, WhatsApp, Telegram, Google, Snapchat ...). Teach it new domains from the dashboard.
+- **Ad / tracker / site blocking** (built-in 18 KB list + your own hosts file), a choice of filtering DNS (Cloudflare Family, AdGuard ...), an **Internet off** switch, usage by hour, when each app was used, top sites per user, memory and flash figures.
 - **Speed limits** for the whole network, a default per user, and per user.
 - **Update over WiFi**: send `ota-firmware.bin` or `ota-ui.bin` from System > Update. A bad firmware rolls back by itself.
 - **Domain log** of the latest lookups, per client.
@@ -92,7 +93,7 @@ The full picture is in the [Architecture overview](docs/architecture/overview.md
 
 ## Install
 
-> Version `0.3.0-beta`. Requires a classic **ESP32** board with 4 MB flash.
+> Version `0.4.0-beta`. Requires a classic **ESP32** board with 4 MB flash.
 
 ### 1. Get the firmware
 

@@ -10,6 +10,7 @@
 #include "telegram_bot.h"
 #include "apps.h"
 #include "ota.h"
+#include "adblock.h"
 
 // Hold BOOT (GPIO0) for FACTORY_RESET_HOLD_MS to wipe the saved network/login
 // settings. This is the way back in if you forget the dashboard password.
@@ -44,6 +45,7 @@ void setup() {
 
     quota_init();                        // needs the AP netif, so after wifiRepeater_init()
     apps_loadCustom();                   // rules you taught it from the dashboard
+    adblock_init();                      // your hosts file + the on/off switch; before the DNS task starts
     dnsMonitor_init();                   // background task
     diagnostics_init();
     webServer_init();

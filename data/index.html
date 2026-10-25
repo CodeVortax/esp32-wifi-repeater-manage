@@ -73,6 +73,13 @@ td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
 .empty{color:var(--muted);text-align:center;padding:22px 8px}
 .banner{background:color-mix(in srgb,var(--amber) 14%,var(--surface));border:1px solid var(--amber);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.88rem}
 .note{font-size:.8rem;color:var(--muted);margin-top:10px}
+dialog#dlg2{width:min(640px,calc(100vw - 28px));max-height:calc(100dvh - 28px);overflow:auto}
+.chart{display:flex;align-items:flex-end;gap:2px;height:110px;margin-top:8px;direction:ltr}
+.chart .col{flex:1;display:flex;flex-direction:column-reverse;height:100%;border-radius:3px;overflow:hidden;background:var(--surface2)}
+.chart .col i{display:block;width:100%}
+.axis{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);direction:ltr;margin-top:3px}
+.strip{display:grid;grid-template-columns:repeat(24,1fr);gap:2px;direction:ltr;min-width:150px;flex:1}
+.strip i{height:10px;border-radius:2px;background:var(--surface2)}
 dialog{border:1px solid var(--line);border-radius:18px;background:var(--surface);color:var(--text);padding:20px;width:min(440px,calc(100vw - 28px))}
 dialog::backdrop{background:rgba(0,0,0,.55)}
 dialog h3{margin:0 0 4px;font-size:1.05rem}
@@ -127,6 +134,12 @@ nav.bottom{display:none}
   </form>
 </dialog>
 
+<dialog id="dlg2">
+  <div class="row between"><h3 id="d2Title" style="margin:0"></h3><button type="button" class="btn sm" id="d2Close" data-t="close"></button></div>
+  <div class="muted small" id="d2Sub"></div>
+  <div id="d2Body"><div class="empty">...</div></div>
+</dialog>
+
 <script>
 'use strict';
 /* ---------- text ---------- */
@@ -158,7 +171,24 @@ const I18N = {
   defPass:'You are still using the default dashboard password. Change it in Settings.',
   noCount:'Traffic counting is not active, so usage and limits will not work.',
   saveNote:'Usage is saved to flash once a minute (and before every restart).',
-  pickFile:'Choose a file first.',user_:'User'},
+  pickFile:'Choose a file first.',user_:'User',
+  block:'Block',adsTitle:'Ads and trackers',adsOn:'Block ads and trackers',adsNames:'names in the built-in list',adsCount:'blocked since restart',
+  adsHow:'Blocked names are answered by the repeater with 0.0.0.0, so the app gives up at once and no data is used. It works for devices that use the repeater as their DNS (the default). Private DNS / DoH / VPN on a phone skips it.',
+  blockedNow:'Most blocked',noneBlocked:'Nothing blocked yet.',yourList:'your list',adList:'ad list',allow:'Allow',unblockRule:'Unblock',blockSite:'Block',
+  siteBox:'Block a site',sitePh:'example.com',siteHint:'Blocks the site and everything under it (video.example.com ...).',
+  hostsTitle:'Your hosts file',hostsHelp:'One rule per line. Understood: 0.0.0.0 example.com, 127.0.0.1 example.com, example.com, ||example.com^ and @@example.com (always allow). # starts a comment. Allow rules beat every block rule.',
+  hostsImport:'Import file...',hostsSave:'Save file',hostsSaved:'Saved: {b} blocks, {a} allows, {i} lines ignored.',hostsFull:' The list is full, extra names were dropped.',
+  hostsUsed:'used',ads:'ads blocked',weak:'weak signal',signalDbm:'Signal',
+  memory:'Memory and storage',ram:'RAM',appFlash:'Firmware slot',files:'Dashboard files',saved_:'Saved data',chip:'Flash chip',largest:'largest free block',lowest:'lowest ever',
+  radio:'WiFi range',txLevel:'Transmit power',tx0:'Maximum (19.5 dBm)',tx1:'High (17 dBm)',tx2:'Medium (13 dBm)',tx3:'Low (8.5 dBm)',
+  radioHint:'Maximum reaches furthest. If the board restarts by itself on a weak USB charger or cable, lower it. Best range: put the repeater between the router and the devices, in the open and high up, and add an external antenna if your board has a connector.',
+  saveFail:'Saving to flash failed {n} time(s). Free some space (System > Memory) or restart.',lowMemWarn:'Memory is very low. Some pages may be slow.',
+  blockAction:'Block this',blockedTag:'blocked',
+  close:'Close',details:'Details',hourly:'Usage by hour (today)',whenUsed:'When each app was used',topDomains:'Most used sites today (lookups)',noData:'Nothing recorded yet.',peak:'Busiest hour',
+  clockWait:'The clock is not set yet, so hourly data starts once the repeater has internet.',
+  inetTitle:'Internet',inetOn:'Internet is ON',inetOff:'Internet is OFF for all users',inetBtnOff:'Turn internet off',inetBtnOn:'Turn internet on',inetNote:'Cuts every device off from the internet, like unplugging the WAN cable. This dashboard keeps working, and devices marked trusted are not affected.',
+  dnsTitle:'DNS provider (filtering)',dnsHow:'The repeater asks this DNS for every name. Family and ad-filter providers block adult or ad sites for everybody. This is plain DNS; phones using Private DNS / DoH / VPN skip it.',
+  dnsActive:'In use',dnsA:'First DNS (IPv4)',dnsB:'Second DNS (optional)',dnsSaved:'DNS saved. It applies right away.'},
  ar:{overview:'نظرة عامة',users:'المستخدمون',apps:'التطبيقات',speed:'السرعة',settings:'الإعدادات',system:'النظام',
   connected:'مباشر',offline:'إعادة الاتصال...',
   online:'متصل',offlineU:'غير متصل',noUsers:'لم يتصل أي جهاز بعد.',
@@ -186,7 +216,24 @@ const I18N = {
   defPass:'ما زلت تستخدم كلمة مرور اللوحة الافتراضية. غيّرها من الإعدادات.',
   noCount:'عدّ البيانات غير مفعّل، لذلك لن يعمل الاستهلاك ولا الحدود.',
   saveNote:'يُحفظ الاستهلاك في الذاكرة كل دقيقة (وقبل كل إعادة تشغيل).',
-  pickFile:'اختر ملفًا أولًا.',user_:'مستخدم'}
+  pickFile:'اختر ملفًا أولًا.',user_:'مستخدم',
+  block:'الحظر',adsTitle:'الإعلانات والمتتبعات',adsOn:'حظر الإعلانات والمتتبعات',adsNames:'اسم في القائمة المدمجة',adsCount:'محظور منذ آخر تشغيل',
+  adsHow:'الأسماء المحظورة يرد عليها الريبيتر بـ 0.0.0.0 فيستسلم التطبيق فورًا ولا تُستهلك بيانات. يعمل مع الأجهزة التي تستخدم الريبيتر كـ DNS (الافتراضي). ميزة DNS الخاص / DoH / VPN في الهاتف تتجاوزه.',
+  blockedNow:'الأكثر حظرًا',noneBlocked:'لا شيء محظور بعد.',yourList:'قائمتك',adList:'قائمة الإعلانات',allow:'سماح',unblockRule:'إلغاء الحظر',blockSite:'حظر',
+  siteBox:'حظر موقع',sitePh:'example.com',siteHint:'يحظر الموقع وكل ما تحته (video.example.com ...).',
+  hostsTitle:'ملف الحظر الخاص بك',hostsHelp:'قاعدة في كل سطر. المدعوم: 0.0.0.0 example.com و 127.0.0.1 example.com و example.com و ||example.com^ و @@example.com (سماح دائم). علامة # تبدأ تعليقًا. قواعد السماح تتغلب على كل قواعد الحظر.',
+  hostsImport:'استيراد ملف...',hostsSave:'حفظ الملف',hostsSaved:'تم الحفظ: {b} حظر، {a} سماح، {i} أسطر متجاهلة.',hostsFull:' القائمة ممتلئة وتم إسقاط الأسماء الزائدة.',
+  hostsUsed:'مستخدم',ads:'إعلان محظور',weak:'إشارة ضعيفة',signalDbm:'الإشارة',
+  memory:'الذاكرة والتخزين',ram:'الذاكرة RAM',appFlash:'خانة البرنامج',files:'ملفات اللوحة',saved_:'البيانات المحفوظة',chip:'شريحة الفلاش',largest:'أكبر كتلة حرة',lowest:'أدنى قيمة',
+  radio:'مدى الواي فاي',txLevel:'قوة الإرسال',tx0:'أقصى (19.5 dBm)',tx1:'عالية (17 dBm)',tx2:'متوسطة (13 dBm)',tx3:'منخفضة (8.5 dBm)',
+  radioHint:'الأقصى يصل لأبعد مدى. إذا أعادت اللوحة التشغيل وحدها مع شاحن أو كابل USB ضعيف فخفّضها. أفضل مدى: ضع الريبيتر بين الراوتر والأجهزة، في مكان مفتوح ومرتفع، وأضف هوائي خارجي إن كانت لوحتك تحتوي على موصل.',
+  saveFail:'فشل الحفظ في الفلاش {n} مرة. حرّر مساحة (النظام > الذاكرة) أو أعد التشغيل.',lowMemWarn:'الذاكرة منخفضة جدًا. قد تبطؤ بعض الصفحات.',
+  blockAction:'حظر هذا',blockedTag:'محظور',
+  close:'إغلاق',details:'التفاصيل',hourly:'الاستهلاك بالساعة (اليوم)',whenUsed:'متى استُخدم كل تطبيق',topDomains:'أكثر المواقع استخدامًا اليوم (طلبات)',noData:'لم يُسجَّل شيء بعد.',peak:'ساعة الذروة',
+  clockWait:'الساعة لم تُضبط بعد، لذلك تبدأ بيانات الساعات عندما يصل الريبيتر للإنترنت.',
+  inetTitle:'الإنترنت',inetOn:'الإنترنت يعمل',inetOff:'الإنترنت مقطوع عن كل المستخدمين',inetBtnOff:'إيقاف الإنترنت',inetBtnOn:'تشغيل الإنترنت',inetNote:'يقطع الإنترنت عن كل الأجهزة كأنك فصلت كابل WAN. تبقى هذه اللوحة تعمل ولا يتأثر الجهاز الموثوق.',
+  dnsTitle:'مزوّد DNS (للفلترة)',dnsHow:'يسأل الريبيتر هذا الـ DNS عن كل اسم. مزوّدو العائلة والإعلانات يحجبون مواقع البالغين أو الإعلانات عن الجميع. هذا DNS عادي؛ الهواتف التي تستخدم DNS الخاص / DoH / VPN تتجاوزه.',
+  dnsActive:'قيد الاستخدام',dnsA:'DNS الأول (IPv4)',dnsB:'DNS الثاني (اختياري)',dnsSaved:'تم حفظ DNS ويعمل فورًا.'}
 };
 let lang=(navigator.language||'').toLowerCase().startsWith('ar')?'ar':'en';
 try{const s=localStorage.getItem('lang');if(s==='ar'||s==='en')lang=s}catch(e){}
@@ -239,6 +286,7 @@ const PAGES=[
  ['overview','overview',['M3 12l9-8 9 8','M5 10v10h14V10']],
  ['users','users',['M16 19v-1.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4V19','M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7','M20 19v-1.5a4 4 0 0 0-3-3.9','M16 4.2a3.5 3.5 0 0 1 0 6.6']],
  ['apps','apps',['M4 4h6v6H4z','M14 4h6v6h-6z','M4 14h6v6H4z','M14 14h6v6h-6z']],
+ ['block','block',['M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z','M9 12l2 2 4-4']],
  ['speed','speed',['M12 14l4-4','M3.5 18a9.5 9.5 0 1 1 17 0']],
  ['settings','settings',['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6','M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z']],
  ['system','system',['M12 3v9','M18.4 6.6a9 9 0 1 1-12.8 0']]
@@ -273,7 +321,7 @@ function applyLang(){
 
 /* ---------- renderers ---------- */
 let pageKey='';
-function typing(){const a=document.activeElement;return a&&(a.tagName==='INPUT'||a.tagName==='SELECT')&&$('page').contains(a)}
+function typing(){const a=document.activeElement;return a&&(a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA')&&$('page').contains(a)}
 function renderPage(force){
   const st=S.status;
   $('title').textContent=t(S.page);
@@ -281,7 +329,7 @@ function renderPage(force){
   if(!st){if(force)$('page').replaceChildren(h('div',{class:'empty'},'...'));return}
   const live=['overview','users','apps'].includes(S.page);
   if(!force&&(!live||typing()))return live?undefined:updateLive();
-  const R={overview:rOverview,users:rUsers,apps:rApps,speed:rSpeed,settings:rSettings,system:rSystem}[S.page];
+  const R={overview:rOverview,users:rUsers,apps:rApps,block:rBlock,speed:rSpeed,settings:rSettings,system:rSystem}[S.page];
   const y=window.scrollY;
   $('page').replaceChildren(R());
   if(!force)window.scrollTo(0,y);
@@ -289,8 +337,11 @@ function renderPage(force){
 function renderBanner(){
   const b=$('banner');b.replaceChildren();
   const st=S.status;if(!st)return;
+  if(st.sys.internetOff)b.append(h('div',{class:'banner row between wrap'},h('span',null,t('inetOff')),h('button',{class:'btn sm',type:'button',onclick:()=>setInternet(false)},t('inetBtnOn'))));
   if(st.sys.defaultPassword)b.append(h('div',{class:'banner'},t('defPass')));
   if(!st.sys.counting)b.append(h('div',{class:'banner'},t('noCount')));
+  if(st.sys.saveFailures>0)b.append(h('div',{class:'banner'},t('saveFail').replace('{n}',st.sys.saveFailures)));
+  if(st.sys.lowMem)b.append(h('div',{class:'banner'},t('lowMemWarn')));
 }
 function renderConn(){
   const ok=live.ok;const c=$('conn');c.replaceChildren(h('span',{class:'dot '+(ok?'on':'off')}),ok?t('connected'):t('offline'));
@@ -320,7 +371,10 @@ function rOverview(){
      stat(t('devices'),online+' / '+devs.length),
      stat(t('usedToday'),fmtBytes(todayTotal)),
      stat(t('signal'),sys.upstream?sys.rssi+' dBm':'—')),
+   h('div',{class:'card'},h('div',{class:'row between wrap'},h('div',null,h('h2',{style:'margin:0 0 4px'},t('inetTitle')),h('span',{class:'row'},h('span',{class:'dot '+(sys.internetOff?'off':'on')}),sys.internetOff?t('inetOff'):t('inetOn'))),
+     h('button',{class:'btn '+(sys.internetOff?'primary':'danger'),type:'button',onclick:()=>setInternet(!sys.internetOff)},sys.internetOff?t('inetBtnOn'):t('inetBtnOff'))),h('div',{class:'note'},t('inetNote'))),
    h('div',{class:'card'},h('h2',null,t('byCategory')),...(cats.some(v=>v)?catBar(cats):[h('div',{class:'empty'},t('noApps'))])),
+   h('div',{class:'card'},h('h2',null,t('hourly')),h('div',{id:'ovChart'},S.ovHours?hourChart(S.ovHours):h('div',{class:'empty'},'...'))),
    h('div',{class:'card'},h('h2',null,t('users')),
      topUsers.length?h('table',null,...topUsers.map(d=>h('tr',null,
         h('td',null,h('span',{class:'dot '+(d.online?'on':'')}),' ',userName(d)),
@@ -343,12 +397,14 @@ function rUsers(){
     if(d.whitelisted)tags.push(h('span',{class:'tag green'},t('trusted')));
     if(d.limitMB>0)tags.push(h('span',{class:'tag amber'},fmtBytes(d.bytesToday)+' / '+d.limitMB+' MB'));
     if(d.down!==-1||d.up!==-1)tags.push(h('span',{class:'tag'},'↓ '+fmtSpeed(d.down)+'  ↑ '+fmtSpeed(d.up)));
+    if(d.ads>0)tags.push(h('span',{class:'tag green'},d.ads+' '+t('ads')));
+    if(d.online&&d.rssi)tags.push(h('span',{class:'tag'+(d.rssi<=-80?' red':d.rssi<=-70?' amber':'')},t('signalDbm')+' '+d.rssi+' dBm'+(d.rssi<=-80?' · '+t('weak'):'')));
     return h('div',{class:'card user'},
       h('div',{class:'row'},
         h('div',{class:'avatar'},d.userNo),
         h('div',{style:'flex:1;min-width:0'},h('div',{class:'name'},userName(d)),
           h('div',{class:'muted small dom'},(d.ip||d.mac)+' · ',h('span',{class:'dot '+(d.online?'on':'')}),' ',d.online?t('online'):t('offlineU'))),
-        h('button',{class:'btn sm',type:'button',onclick:()=>openDialog(d.mac)},t('rename'))),
+        h('span',{class:'row',style:'gap:6px'},h('button',{class:'btn sm',type:'button',onclick:()=>openDetail(d.mac)},t('details')),h('button',{class:'btn sm',type:'button',onclick:()=>openDialog(d.mac)},t('rename')))),
       h('div',{class:'row between'},h('span',{class:'muted small'},t('today')),h('b',null,fmtBytes(d.bytesToday))),
       ...catBar(d.cats),
       apps.length?h('div',{class:'small'},...apps.map(p=>h('div',{class:'row between',style:'padding:2px 0'},h('span',null,appName(p[0])),h('span',{class:'muted'},fmtKB(p[1]))))):null,
@@ -386,8 +442,10 @@ function rApps(){
         h('td',{class:'n'},fmtKB(p[1]))))):h('div',{class:'empty'},t('noApps'))));
   root.append(h('div',{class:'card'},h('h2',null,t('liveDomains')),
      S.status.dns.length?h('table',null,...S.status.dns.slice(0,15).map(e=>h('tr',null,
-        h('td',{class:'dom'},e.domain),h('td',null,e.app?h('span',{class:'tag'},appName(e.app)):h('span',{class:'tag amber'},'?')),
-        h('td',{class:'muted small'},e.who||e.ip)))):h('div',{class:'empty'},t('noDomains'))));
+        h('td',{class:'dom'},e.domain),
+        h('td',null,e.blk?h('span',{class:'tag red'},t('blockedTag')):e.app?h('span',{class:'tag'},appName(e.app)):h('span',{class:'tag amber'},'?')),
+        h('td',{class:'muted small'},e.who||e.ip),
+        h('td',{style:'text-align:end'},e.blk?null:h('button',{class:'btn sm',type:'button',title:t('blockAction'),onclick:()=>blockRule(guessSuffix(e.domain),'block')},t('blockSite')))))):h('div',{class:'empty'},t('noDomains'))));
   root.append(learnCard());
   root.append(h('div',{class:'note'},t('appsNote')));
   return root;
@@ -403,7 +461,8 @@ function learnCard(){
     card.append(h('div',{style:'padding:8px 0;border-top:1px solid var(--line)'},
       h('div',{class:'dom small'},u.domain+'  ',h('span',{class:'muted'},'×'+u.count+(u.who?' · '+u.who:''))),
       h('div',{class:'row',style:'margin-top:6px'},inp,h('div',{style:'max-width:170px'},sel),
-        h('button',{class:'btn sm',type:'button',onclick:()=>addRule(inp.value,sel.value)},t('assign')))));
+        h('button',{class:'btn sm',type:'button',onclick:()=>addRule(inp.value,sel.value)},t('assign')),
+        h('button',{class:'btn sm danger',type:'button',onclick:()=>blockRule(inp.value,'block')},t('blockSite')))));
   }
   if(L.unknown.length)card.append(h('div',{style:'margin-top:8px'},h('button',{class:'btn sm',type:'button',onclick:async()=>{await post('/api/unknown/clear',{});await loadLearn();renderPage(true)}},t('clear'))));
   card.append(h('h2',{style:'margin-top:18px'},t('rules')));
@@ -490,11 +549,20 @@ function rSystem(){
    h('div',{class:'card'},h('table',null,
      row(t('version'),sys.version),row(t('uptime'),fmtUp(sys.uptime)),row(t('freeMem'),fmtBytes(sys.heap)),
      row(t('homeWifi'),sys.staSsid+(sys.upstream?' ('+sys.staIp+')':'')),row(t('repeater'),sys.apSsid+' ('+sys.apIp+')'),row(t('channel'),sys.channel))),
+   h('div',{class:'card'},h('h2',null,t('memory')),h('div',{id:'memBox'},h('div',{class:'empty'},'...'))),
+   radioCard(),
    h('div',{class:'card'},h('h2',null,t('ping')),h('div',{class:'row'},pingHost,runPing),pingOut),
    h('div',{class:'card'},h('h2',null,t('update')),otaBox('firmware',t('updFw')),h('div',{style:'height:14px'}),otaBox('ui',t('updUi')),h('div',{class:'note'},t('updNote'))),
    h('div',{class:'row wrap'},
      h('button',{class:'btn danger',type:'button',onclick:async()=>{if(confirm(t('rebootAsk'))){await post('/api/reboot',{});toast(t('updDone'))}}},t('reboot')),
      h('button',{class:'btn',type:'button',onclick:logout},t('logout'))));
+}
+function radioCard(){
+  const sel=h('select',{'aria-label':t('txLevel'),onchange:async e=>{const x=await post('/api/radio',{level:e.target.value});toast(x.ok?t('saved'):t('failed'));poke()}},
+    ...[0,1,2,3].map(i=>h('option',{value:i,selected:S.status.sys.txLevel===i?true:null},t('tx'+i))));
+  return h('div',{class:'card'},h('h2',null,t('radio')),h('label',{class:'f'},t('txLevel')),sel,
+    h('div',{class:'note'},t('radioHint')),
+    h('div',{class:'note'},t('signal')+': '+(S.status.sys.upstream?S.status.sys.rssi+' dBm':'—')));
 }
 function otaBox(type,label){
   const file=h('input',{type:'file',accept:'.bin','aria-label':label});
@@ -520,12 +588,165 @@ function otaBox(type,label){
   return h('div',null,h('label',{class:'f'},label),h('div',{class:'row wrap'},h('div',{style:'flex:1;min-width:200px'},file),btn),prog,msg);
 }
 function updateLive(){
+  if(S.page==='block')fillBlockLive();
+  if(S.page==='system')fillSysinfo();
   // Speed page: refresh the per-user table values only when nothing is being typed.
   if(S.page==='speed')for(const tr of document.querySelectorAll('#page tr[data-mac]')){
     const d=devByMac(tr.dataset.mac);if(!d)continue;
     tr.children[1].textContent='↓ '+fmtSpeed(d.down);tr.children[2].textContent='↑ '+fmtSpeed(d.up);
   }
 }
+
+/* ---------- blocking ---------- */
+async function blockRule(domain,mode){
+  const x=await post('/api/hosts/rule',{domain:domain.trim().toLowerCase(),mode});
+  toast(x.ok?t('saved'):(x.text||t('failed')));
+  if(x.ok){await loadAdblock();poke();if(S.page==='block')fillBlockLive()}
+  return x.ok;
+}
+function rBlock(){
+  const stats=h('div',{class:'stats',id:'blkStats'});
+  const sw=h('input',{type:'checkbox',id:'adSwitch',style:'width:auto',onchange:async e=>{await post('/api/adblock/enable',{on:e.target.checked?'1':'0'});await loadAdblock();fillBlockLive()}});
+  const site=h('input',{placeholder:t('sitePh'),autocapitalize:'off',spellcheck:'false','aria-label':t('siteBox')});
+  const hosts=h('textarea',{id:'hostsText',rows:'9',spellcheck:'false',autocapitalize:'off','aria-label':t('hostsTitle'),style:'width:100%;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;direction:ltr;background:var(--surface2);border:1px solid var(--line);border-radius:10px;color:inherit;padding:9px'});
+  const hostsMsg=h('div',{class:'msg'});
+  const used=h('span',{class:'muted small',id:'hostsUsed'});
+  const file=h('input',{type:'file',accept:'.txt,.hosts,text/plain',style:'display:none',onchange:async e=>{
+    const f=e.target.files[0];if(!f)return;
+    if(f.size>12288){hostsMsg.className='msg err';hostsMsg.textContent=t('failed')+' (12 KB max)';return}
+    hosts.value=await f.text();updUsed();e.target.value=''}});
+  const updUsed=()=>{used.textContent=new Blob([hosts.value]).size+' / 12288 B '+t('hostsUsed')};
+  hosts.addEventListener('input',updUsed);
+  fetch('/api/hosts',{headers:{'X-Requested-With':'dashboard'}}).then(r=>r.text()).then(x=>{if(document.activeElement!==hosts){hosts.value=x;updUsed()}}).catch(()=>{});
+  return h('div',null,
+    h('div',{class:'card'},h('h2',null,t('adsTitle')),
+      h('label',{class:'row'},sw,h('span',null,t('adsOn'))),stats,h('div',{class:'note'},t('adsHow'))),
+    h('div',{class:'card'},h('h2',null,t('blockedNow')),h('div',{id:'blkRecent'},h('div',{class:'empty'},'...'))),
+    h('div',{class:'card'},h('h2',null,t('siteBox')),
+      h('div',{class:'row'},site,h('button',{class:'btn primary',type:'button',onclick:async()=>{if(await blockRule(site.value,'block'))site.value='';hosts.value=await (await fetch('/api/hosts',{headers:{'X-Requested-With':'dashboard'}})).text();updUsed()}},t('blockSite'))),
+      h('div',{class:'note'},t('siteHint'))),
+    dnsCard(),
+    h('div',{class:'card'},h('h2',null,t('hostsTitle')),h('div',{class:'muted small',style:'margin-bottom:8px'},t('hostsHelp')),hosts,
+      h('div',{class:'row between wrap',style:'margin-top:8px'},used,h('span',{class:'row'},
+        h('button',{class:'btn',type:'button',onclick:()=>file.click()},t('hostsImport')),file,
+        h('button',{class:'btn primary',type:'button',onclick:async()=>{
+          const x=await post('/api/hosts',{text:hosts.value});
+          if(x.ok){let j={};try{j=JSON.parse(x.text)}catch(e){}hostsMsg.className='msg ok';
+            hostsMsg.textContent=t('hostsSaved').replace('{b}',j.blocks).replace('{a}',j.allows).replace('{i}',j.ignored)+(j.full?t('hostsFull'):'');await loadAdblock();fillBlockLive()}
+          else{hostsMsg.className='msg err';hostsMsg.textContent=x.text||t('failed')}
+        }},t('hostsSave')))),hostsMsg));
+}
+function fillBlockLive(){
+  const A=S.adblock;if(!A)return;
+  const sw=$('adSwitch');if(sw&&document.activeElement!==sw)sw.checked=!!A.enabled;
+  const st=$('blkStats');
+  if(st){st.replaceChildren(
+    h('div',{class:'stat'},h('span',null,t('adsNames')),h('b',null,A.names)),
+    h('div',{class:'stat'},h('span',null,t('adsCount')),h('b',null,A.blockedTotal)),
+    h('div',{class:'stat'},h('span',null,t('hostsTitle')),h('b',null,A.userBlocks+' / '+A.userAllows)))}
+  const box=$('blkRecent');
+  if(box){box.replaceChildren(A.recent.length?h('table',null,...A.recent.map(r=>h('tr',null,
+    h('td',{class:'dom'},r.domain),h('td',{class:'n small muted'},'×'+r.count),
+    h('td',null,h('span',{class:'tag'+(r.v===1?' red':'')},r.v===1?t('yourList'):t('adList'))),
+    h('td',{class:'muted small'},r.who),
+    h('td',{style:'text-align:end'},r.v===1
+      ?h('button',{class:'btn sm',type:'button',onclick:()=>blockRule(r.domain,'remove')},t('unblockRule'))
+      :h('button',{class:'btn sm',type:'button',onclick:()=>blockRule(r.domain,'allow')},t('allow'))))))
+    :h('div',{class:'empty'},t('noneBlocked')))}
+}
+
+/* ---------- internet switch, hourly charts, details, DNS ---------- */
+async function setInternet(on){
+  const x=await post('/api/internet',{off:on?'0':'1'});
+  toast(x.ok?t('saved'):t('failed'));poke();
+}
+function hourChart(hours){
+  const tot=hours.map(r=>r.reduce((a,b)=>a+b,0));
+  const max=Math.max(1,...tot);
+  if(!tot.some(v=>v))return h('div',{class:'empty'},t('noData'));
+  const cols=hours.map((r,hr)=>h('div',{class:'col',title:String(hr).padStart(2,'0')+':00  '+fmtKB(tot[hr])},
+    ...r.map((v,c)=>v?h('i',{style:`height:${(v/max*100).toFixed(2)}%;background:var(--c${c})`}):null)));
+  const peak=tot.indexOf(Math.max(...tot));
+  const leg=h('div',{class:'legend',style:'margin-top:8px'});
+  const cats=Array(8).fill(0);hours.forEach(r=>r.forEach((v,c)=>cats[c]+=v));
+  cats.forEach((v,c)=>{if(v)leg.append(h('span',null,h('em',{style:`background:var(--c${c})`}),catLabel(c)))});
+  return h('div',null,h('div',{class:'chart'},...cols),h('div',{class:'axis'},...[0,3,6,9,12,15,18,21].map(x=>h('span',null,String(x).padStart(2,'0')))),leg,
+    h('div',{class:'muted small',style:'margin-top:6px'},t('peak')+': '+String(peak).padStart(2,'0')+':00 ('+fmtKB(tot[peak])+')'));
+}
+let lastOv=0;
+async function loadOverviewChart(){
+  const box=$('ovChart');if(!box)return;
+  try{const j=await (await api('/api/user?mac=all')).json();S.ovHours=j.hours;lastOv=Date.now();const b2=$('ovChart');if(b2)b2.replaceChildren(hourChart(j.hours))}catch(e){}
+}
+async function openDetail(mac){
+  const d=devByMac(mac);if(!d)return;
+  $('d2Title').textContent=userName(d);$('d2Sub').textContent=(d.ip?d.ip+' · ':'')+d.mac;
+  const body=$('d2Body');body.replaceChildren(h('div',{class:'empty'},'...'));
+  $('dlg2').showModal();
+  let j;
+  try{const r=await api('/api/user?mac='+encodeURIComponent(mac));if(!r.ok)throw 0;j=await r.json()}
+  catch(e){body.replaceChildren(h('div',{class:'empty'},t('failed')));return}
+  const pc=m=>{let c=0;while(m){c+=m&1;m>>>=1}return c};
+  const apps=j.apps.map(p=>({id:p[0],mask:p[1]})).sort((a,b)=>pc(b.mask)-pc(a.mask)).slice(0,10);
+  body.replaceChildren(
+    h('h2',{style:'margin:14px 0 0;font-size:.95rem'},t('hourly')),hourChart(j.hours),
+    h('h2',{style:'margin:18px 0 6px;font-size:.95rem'},t('whenUsed')),
+    apps.length?h('div',null,...apps.map(a=>h('div',{class:'row',style:'padding:4px 0;gap:10px'},
+       h('span',{style:'width:34%;min-width:90px;font-size:.84rem'},appName(a.id)),
+       h('span',{class:'strip'},...Array.from({length:24},(_,hr)=>h('i',{title:String(hr).padStart(2,'0')+':00',style:(a.mask>>>hr)&1?`background:var(--c${appCat(a.id)})`:''})))))
+      ,h('div',{class:'axis',style:'margin-inline-start:calc(34% + 10px)'},...[0,6,12,18,23].map(x=>h('span',null,String(x).padStart(2,'0')))))
+      :h('div',{class:'empty'},t('noData')),
+    h('h2',{style:'margin:18px 0 6px;font-size:.95rem'},t('topDomains')),
+    j.top.length?h('table',null,...j.top.map(r=>h('tr',null,h('td',{class:'dom'},r[0]),h('td',null,r[2]?h('span',{class:'tag'},appName(r[2])):null),h('td',{class:'n small muted'},'×'+r[1]),
+       h('td',{style:'text-align:end'},h('button',{class:'btn sm',type:'button',onclick:async()=>{if(await blockRule(r[0],'block'))toast(t('saved'))}},t('blockSite'))))))
+      :h('div',{class:'empty'},t('noData')),
+    S.status.sys.time<1700000000?h('div',{class:'note'},t('clockWait')):null);
+}
+$('d2Close').onclick=()=>$('dlg2').close();
+
+function dnsCard(){
+  const sel=h('select',{id:'dnsSel','aria-label':t('dnsTitle')});
+  const a=h('input',{id:'dnsA',placeholder:'1.1.1.1',inputmode:'decimal',autocapitalize:'off'});
+  const b=h('input',{id:'dnsB',placeholder:'1.0.0.1',inputmode:'decimal',autocapitalize:'off'});
+  const custom=h('div',{class:'two',style:'display:none;margin-top:8px'},h('div',null,h('label',{class:'f'},t('dnsA')),a),h('div',null,h('label',{class:'f'},t('dnsB')),b));
+  const info=h('div',{class:'note',id:'dnsInfo'});
+  const msg=h('div',{class:'msg'});
+  let n=0;
+  const upd=()=>{custom.style.display=Number(sel.value)===n-1?'':'none'};
+  sel.onchange=upd;
+  api('/api/dns').then(r=>r.json()).then(j=>{
+    n=j.presets.length;
+    sel.replaceChildren(...j.presets.map((p,i)=>h('option',{value:i,selected:i===j.preset?true:null},p.name+(p.a&&i<n-1?'  ('+p.a+')':''))));
+    a.value=j.customA;b.value=j.customB;upd();
+    info.textContent=t('dnsActive')+': '+j.activeA+(j.activeB?' , '+j.activeB:'');
+  }).catch(()=>{});
+  return h('div',{class:'card'},h('h2',null,t('dnsTitle')),sel,custom,
+    h('div',{style:'margin-top:10px'},h('button',{class:'btn primary',type:'button',onclick:async()=>{
+      const x=await post('/api/dns',{preset:sel.value,a:a.value.trim(),b:b.value.trim()});
+      msg.className='msg '+(x.ok?'ok':'err');msg.textContent=x.ok?t('dnsSaved'):(x.text||t('failed'));
+      if(x.ok){const j=await (await api('/api/dns')).json();info.textContent=t('dnsActive')+': '+j.activeA+(j.activeB?' , '+j.activeB:'')}
+    }},t('save'))),msg,info,h('div',{class:'note'},t('dnsHow')));
+}
+
+/* ---------- memory and radio (System page) ---------- */
+function meter(label,used,total,detail){
+  const pct=total?Math.min(100,used/total*100):0;
+  return h('div',{style:'margin:10px 0'},h('div',{class:'row between small'},h('span',null,label),h('span',{class:'muted'},detail||(fmtBytes(used)+' / '+fmtBytes(total)))),
+    h('div',{class:'hbar',style:'margin-top:4px;height:8px'},h('i',{style:`width:${pct.toFixed(1)}%;background:${pct>90?'var(--red)':pct>75?'var(--amber)':'var(--blue)'}`})));
+}
+function fillSysinfo(){
+  const box=$('memBox');if(!box)return;
+  const m=S.sysinfo;if(!m){return}
+  box.replaceChildren(
+    meter(t('ram'),m.heapTotal-m.heapFree,m.heapTotal),
+    h('div',{class:'muted small'},t('largest')+': '+fmtBytes(m.heapBlock)+' · '+t('lowest')+': '+fmtBytes(m.heapMin)+' free'),
+    meter(t('appFlash'),m.appUsed,m.appSlot),
+    meter(t('files'),m.spiffsUsed,m.spiffsTotal),
+    meter(t('saved_'),m.nvsUsed,m.nvsTotal),
+    h('div',{class:'muted small'},t('chip')+': '+fmtBytes(m.flashChip)+' · CPU '+m.cpu+' MHz'));
+}
+async function loadSysinfo(){try{S.sysinfo=await (await api('/api/sysinfo')).json()}catch(e){}}
+async function loadAdblock(){try{S.adblock=await (await api('/api/adblock')).json()}catch(e){}}
 
 /* ---------- user dialog ---------- */
 let dlgMac=null;
@@ -580,6 +801,9 @@ let lastSlow=0;
 async function poke(){
   await loadStatus();
   if(['apps','users'].includes(S.page)){await loadApps();if(S.page==='apps')await loadLearn();renderPage(false)}
+  if(S.page==='overview')loadOverviewChart();
+  if(S.page==='block'){await loadAdblock();fillBlockLive()}
+  if(S.page==='system'){await loadSysinfo();fillSysinfo()}
   lastSlow=Date.now();
 }
 function openWs(){
@@ -596,6 +820,9 @@ async function tick(){
   if(Date.now()-lastSlow>5000&&['apps','users'].includes(S.page)){
     lastSlow=Date.now();await loadApps();if(S.page==='apps')await loadLearn();renderPage(false);
   }
+  if(S.page==='overview'&&Date.now()-lastOv>30000)loadOverviewChart();
+  if(S.page==='block'&&Date.now()-lastSlow>3000){lastSlow=Date.now();await loadAdblock();fillBlockLive()}
+  if(S.page==='system'&&Date.now()-lastSlow>3000){lastSlow=Date.now();await loadSysinfo();fillSysinfo()}
 }
 
 /* ---------- start ---------- */

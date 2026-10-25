@@ -95,3 +95,48 @@ bool dns_learnFromReply(const uint8_t *r, int len, uint8_t questionApp, DnsLearn
     }
     return true;
 }
+
+int dns_buildBlocked(const uint8_t *q, int len, uint8_t *out, int cap) {
+    if (len < 17 || cap < len + 16) return 0;
+    if ((q[2] & 0x80) != 0) return 0;                        // a response, not a query
+    if (((q[2] >> 3) & 0x0F) != 0) return 0;                 // only standard queries
+    if (q[4] != 0 || q[5] != 1) return 0;                    // exactly one question
+    int end = skipName(q, len, 12);
+    if (end < 0 || end + 4 > len) return 0;
+    if (q[12] & 0xC0) return 0;
+    int qEnd = end + 4;                                      // type + class
+    uint16_t qtype = (uint16_t)((q[end] << 8) | q[end + 1]);
+
+    memcpy(out, q, qEnd);
+    out[2] = (uint8_t)(0x80 | (q[2] & 0x01));                // QR, RD copied
+    out[3] = 0x80;                                           // RA, NOERROR
+    out[6] = 0; out[7] = (qtype == 1) ? 1 : 0;               // answers
+    out[8] = out[9] = out[10] = out[11] = 0;                 // no authority / extra
+    int o = qEnd;
+    if (qtype == 1) {
+        static const uint8_t ans[] = { 0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x04, 0, 0, 0, 0 };
+        memcpy(out + o, ans, sizeof(ans));
+        o += sizeof(ans);
+    }
+    return o;
+}
+
+void dns_baseDomain(const char *name, char *out, int outSize) {
+    int n = (int)strlen(name);
+    int dots[8], nd = 0;
+    for (int i = 0; i < n && nd < 8; i++) if (name[i] == '.') dots[nd++] = i;
+    int start = 0;                                     // where the kept part begins
+    if (nd >= 2) {
+        int tldLen = n - dots[nd - 1] - 1;
+        int secLen = dots[nd - 1] - dots[nd - 2] - 1;
+        const char *sec = name + dots[nd - 2] + 1;
+        bool twoPart = tldLen == 2 && secLen <= 3 &&
+            ((secLen == 2 && (!strncmp(sec, "co", 2) || !strncmp(sec, "ac", 2) || !strncmp(sec, "or", 2) || !strncmp(sec, "ne", 2) || !strncmp(sec, "go", 2))) ||
+             (secLen == 3 && (!strncmp(sec, "com", 3) || !strncmp(sec, "net", 3) || !strncmp(sec, "org", 3) || !strncmp(sec, "gov", 3) || !strncmp(sec, "edu", 3))));
+        start = (twoPart && nd >= 3) ? dots[nd - 3] + 1 : dots[nd - 2] + 1;
+    }
+    int l = n - start;
+    if (l >= outSize) l = outSize - 1;
+    memcpy(out, name + start, l);
+    out[l] = '\0';
+}

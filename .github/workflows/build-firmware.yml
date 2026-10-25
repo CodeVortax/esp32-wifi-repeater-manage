@@ -22,6 +22,11 @@ jobs:
         run: |
           make -C test CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -I../src"
 
+      - name: Blocklist is up to date
+        run: |
+          python3 scripts/gen_blocklist.py
+          git diff --exit-code src/blocklist_data.h blocklist/compiled-names.txt
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

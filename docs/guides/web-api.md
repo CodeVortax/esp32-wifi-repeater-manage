@@ -19,6 +19,17 @@ Form-encoded bodies, as `application/x-www-form-urlencoded`. A MAC may use `:` o
 | `POST /api/rules/del` | `suffix` | 200 / 404 |
 | `POST /api/unknown/clear` | | 200 |
 | `POST /api/reboot` | | 200 |
+| `GET /api/adblock` | | `{enabled, names, userBlocks, userAllows, blockedTotal, fileBytes, maxBytes, nvsFree, recent[]}` |
+| `POST /api/adblock/enable` | `on` (`1`/`0`) | 200 |
+| `GET /api/hosts` | | the hosts file as text |
+| `POST /api/hosts` | `text` (max 12288 bytes) | `{blocks, allows, ignored, full}` / 400 with the reason |
+| `POST /api/hosts/rule` | `domain`, `mode` (`block`, `allow`, `remove`) | 200 / 400 |
+| `GET /api/dns` | | `{preset, presets[], customA, customB, activeA, activeB}` |
+| `POST /api/dns` | `preset` (index), `a`, `b` (for the last, custom preset) | 200 / 400 |
+| `POST /api/internet` | `off` (`1`/`0`) | 200 |
+| `GET /api/user?mac=` | MAC or `all` | `{hours[24][8] KB, apps[[id, hourMask]], top[[domain, lookups, app]]}` |
+| `GET /api/sysinfo` | | RAM, flash slot, SPIFFS, NVS figures |
+| `POST /api/radio` | `level` (0 = max power .. 3) | 200 / 400 |
 | `POST /api/ota?type=firmware\|ui` | multipart `file` (`ota-firmware.bin` / `ota-ui.bin`) | 200 and restart / 400 `{error}` |
 | `POST /api/block` | `mac` | 200 / 404 |
 | `POST /api/unblock` | `mac` | 200 / 404 |

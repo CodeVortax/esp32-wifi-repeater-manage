@@ -201,6 +201,19 @@ static const Rule RULES[] = {
     R("onedrive.com", CLOUD) R("onedrive.live.com", CLOUD) R("sharepoint.com", CLOUD)
     R("icloud.com", CLOUD) R("icloud-content.com", CLOUD) R("mega.nz", CLOUD) R("mega.io", CLOUD)
     R("box.com", CLOUD) R("wetransfer.com", CLOUD) R("mediafire.com", CLOUD)
+    // clocks and connectivity checks: tiny, constant, and not "Google" or "browsing"
+    R("ntp.org", SYSTEM) R("time.android.com", SYSTEM) R("time.windows.com", SYSTEM)
+    R("time.apple.com", SYSTEM) R("time.google.com", SYSTEM) R("time.cloudflare.com", SYSTEM)
+    R("connectivitycheck.gstatic.com", SYSTEM) R("connectivitycheck.android.com", SYSTEM)
+    R("clients3.google.com", SYSTEM) R("msftconnecttest.com", SYSTEM) R("captive.apple.com", SYSTEM)
+    // phone makers' own services (seen on Oppo / Realme / OnePlus / MediaTek phones)
+    R("allawnos.com", PHONEUPDATE) R("heytapmobi.com", PHONEUPDATE) R("heytapdl.com", PHONEUPDATE)
+    R("mediatek.com", PHONEUPDATE)
+    // Google's other domains and its safe-browsing relay
+    R("google.us", GOOGLE) R("google.fastly-edge.com", GOOGLE)
+    // ad and tracker networks (only reached when the blocker is switched off)
+    R("tiqcdn.com", ADS) R("taboola.com", ADS) R("outbrain.com", ADS)
+    R("appsflyer.com", ADS) R("scorecardresearch.com", ADS)
 };
 #undef R
 static const int RULE_COUNT = (int)(sizeof(RULES) / sizeof(RULES[0]));
@@ -221,6 +234,23 @@ static const Cidr CIDRS[] = {
     { OCT(91, 108, 56, 0),   MASK(22), APP_TELEGRAM },
     { OCT(185, 76, 151, 0),  MASK(24), APP_TELEGRAM },
 };
+// Addresses that thousands of unrelated sites share (Cloudflare, Fastly). A name that points
+// there tells us nothing about the next connection to that address, so they are never remembered;
+// that traffic is counted as "Other" instead of being credited to whichever app asked last.
+static const Cidr SHARED[] = {
+    { OCT(173, 245, 48, 0), MASK(20), 0 }, { OCT(103, 21, 244, 0), MASK(22), 0 }, { OCT(103, 22, 200, 0), MASK(22), 0 },
+    { OCT(103, 31, 4, 0),   MASK(22), 0 }, { OCT(141, 101, 64, 0), MASK(18), 0 }, { OCT(108, 162, 192, 0), MASK(18), 0 },
+    { OCT(190, 93, 240, 0), MASK(20), 0 }, { OCT(188, 114, 96, 0), MASK(20), 0 }, { OCT(197, 234, 240, 0), MASK(22), 0 },
+    { OCT(198, 41, 128, 0), MASK(17), 0 }, { OCT(162, 158, 0, 0),  MASK(15), 0 }, { OCT(104, 16, 0, 0),    MASK(13), 0 },
+    { OCT(104, 24, 0, 0),   MASK(14), 0 }, { OCT(172, 64, 0, 0),   MASK(13), 0 }, { OCT(131, 0, 72, 0),    MASK(22), 0 },
+    { OCT(151, 101, 0, 0),  MASK(16), 0 }, { OCT(199, 232, 0, 0),  MASK(16), 0 },
+};
+static bool isSharedAddress(uint32_t ip) {
+    for (size_t i = 0; i < sizeof(SHARED) / sizeof(SHARED[0]); i++)
+        if ((ip & SHARED[i].mask) == SHARED[i].net) return true;
+    return false;
+}
+
 static const int CIDR_COUNT = (int)(sizeof(CIDRS) / sizeof(CIDRS[0]));
 
 // ---------------------------------------------------------------------------
@@ -397,7 +427,7 @@ void apps_cacheClear() {
 }
 
 void apps_cachePut(uint32_t ip, uint8_t app, uint16_t nowMin) {
-    if (ip == 0 || app == APP_OTHER || app >= APP_COUNT) return;
+    if (ip == 0 || app == APP_OTHER || app >= APP_COUNT || isSharedAddress(ip)) return;
     CACHE_LOCK();
     CacheEntry *set = cache[setOf(ip)];
     int target = -1;

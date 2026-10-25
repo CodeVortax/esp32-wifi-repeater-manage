@@ -22,6 +22,7 @@ struct DeviceUsage {
     bool     whitelisted;               // never blocked, never limited
     bool     active;                    // slot in use
     bool     online;                    // filled in by quota_snapshot(): associated right now
+    int8_t   rssi;                      // filled in by quota_snapshot(): signal in dBm, 0 when offline
     bool     kickPending;               // internal: deauth this station from the main loop
     bool     quotaOverride;             // manually unblocked: ignore the quota until the daily reset
     uint32_t lastSeenMs;                // millis() of the last frame
@@ -37,6 +38,7 @@ struct SpeedConfig {
 
 void quota_init();           // call after wifiRepeater_init()
 void quota_loop();           // call from loop(): midnight reset, deauth, flash save
+uint32_t quota_saveFailures();   // saves that failed since boot (flash full or worn)
 void quota_saveNow();        // flush everything to flash (before a reboot)
 
 // Thread-safe copy of the device table (only active slots). Returns count.
@@ -58,8 +60,18 @@ bool quota_setWhitelist(const char *macStr, bool enabled);
 bool quota_setName(const char *macStr, const char *name);                 // "" clears the name
 bool quota_setDeviceSpeed(const char *macStr, uint32_t downKbps, uint32_t upKbps);
 
+// When was it used? hoursKB[h][category] = KB moved in local hour h today; appMask[app] has bit h set
+// when that app moved at least 64 KB in hour h. macStr == nullptr: all devices together.
+bool quota_hourly(const char *macStr, uint32_t hoursKB[24][CAT_COUNT], uint32_t *appMask);
+
+// "Internet off" for everybody, like pulling the WAN cable: every device is cut off from the
+// internet (the dashboard, which is the repeater itself, still works) except trusted devices.
+bool quota_internetOff();
+void quota_setInternetOff(bool off);
+
 SpeedConfig quota_getSpeedConfig();
 void        quota_setSpeedConfig(const SpeedConfig &cfg);
 
 void quota_resetDaily();
 bool quota_hooksInstalled();
+bool quota_isTrustedIp(uint32_t ip);    // is the device holding this address marked trusted?

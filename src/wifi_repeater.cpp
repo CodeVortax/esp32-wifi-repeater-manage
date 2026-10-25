@@ -3,6 +3,8 @@
 #include "settings.h"
 #include <WiFi.h>
 #include <esp_netif.h>
+#include <esp_wifi.h>
+#include <Preferences.h>
 
 extern "C" {
   #include "lwip/lwip_napt.h"
@@ -86,12 +88,39 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
     }
 }
 
+static const wifi_power_t TX_LEVELS[4] = { WIFI_POWER_19_5dBm, WIFI_POWER_17dBm, WIFI_POWER_13dBm, WIFI_POWER_8_5dBm };
+
+uint8_t wifiRepeater_getTxLevel() {
+    Preferences p;
+    p.begin("radio", false);
+    uint8_t v = p.getUChar("tx", 0);
+    p.end();
+    return v > 3 ? 0 : v;
+}
+
+static void applyRadio(uint8_t level) {
+    WiFi.setTxPower(TX_LEVELS[level > 3 ? 0 : level]);
+    // 20 MHz channels hear about 3 dB further than 40 MHz ones, on both sides of the repeater.
+    esp_wifi_set_bandwidth(WIFI_IF_AP,  WIFI_BW_HT20);
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+}
+
+void wifiRepeater_setTxLevel(uint8_t level) {
+    if (level > 3) return;
+    Preferences p;
+    p.begin("radio", false);
+    p.putUChar("tx", level);
+    p.end();
+    applyRadio(level);
+}
+
 void wifiRepeater_init() {
     WiFi.persistent(false);              // don't rewrite credentials to flash on every boot
     WiFi.setAutoReconnect(true);
     WiFi.onEvent(onWifiEvent);
     WiFi.mode(WIFI_AP_STA);
     WiFi.setSleep(false);                // lower latency / higher throughput for a repeater
+    applyRadio(wifiRepeater_getTxLevel());
 
     String apSsid  = settings_getApSsid();
     String apPass  = settings_getApPassword();

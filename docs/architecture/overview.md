@@ -47,6 +47,9 @@ Rules the code follows: **no allocation and no `Serial` inside a spinlock**, **n
 |---|---|---|
 | NVS namespace `netcfg` | WiFi names and passwords, dashboard password, Telegram | When you save Settings |
 | NVS namespace `quota` | Known devices, limits, flags, counters, the day of the last reset | Every minute if counters changed (atomic, checksummed blobs `cfg3` / `use3`), soon after any change you make, and before every restart |
+| NVS namespace `adblock` | Your hosts file, the ad-list switch | When you save it |
+| NVS namespace `dnsup`, `radio` | DNS provider, transmit power | When you change them |
+| NVS key `quota/hr3` | Usage by hour, hours each app was used | Every 10 minutes if changed, and before a restart |
 | NVS namespace `apprules` | Your custom domain rules | When you add or remove one |
 | NVS namespace `ota` | Boot counter for roll-back | At every boot, cleared once healthy |
 | SPIFFS | `index.html`, `login.html` | When you flash or send `ota-ui.bin` |

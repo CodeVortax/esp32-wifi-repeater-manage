@@ -7,3 +7,4 @@
 *.bin.sha256
 dist/
 .DS_Store
+test/host_tests

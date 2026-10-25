@@ -80,7 +80,9 @@
   X(WINUPDATE,    "Windows Update",     CAT_DOWNLOADS, 0) \
   X(APPLEUPDATE,  "Apple updates",      CAT_DOWNLOADS, 0) \
   X(PHONEUPDATE,  "Phone updates",      CAT_DOWNLOADS, 0) \
-  X(CLOUD,        "Cloud storage",      CAT_DOWNLOADS, 0)
+  X(CLOUD,        "Cloud storage",      CAT_DOWNLOADS, 0) \
+  X(SYSTEM,       "System & time",      CAT_OTHER,     0) \
+  X(ADS,          "Ads & trackers",     CAT_OTHER,     0)
 
 enum AppCategory : uint8_t {
     CAT_VIDEO = 0, CAT_SOCIAL, CAT_MESSAGING, CAT_BROWSING,
