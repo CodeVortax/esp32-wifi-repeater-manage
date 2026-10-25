@@ -54,18 +54,21 @@ Everything runs on the chip. There is no cloud, no account and no app to install
 | **Daily quota** | Default 1 GB per device per day. Change it per device, or set `0` for unlimited. |
 | **Block / whitelist** | A blocked device stays connected but gets no traffic. Whitelisted devices are never limited. |
 | **Local midnight reset** | Time-zone and daylight-saving aware (Egypt by default). A reboot across midnight still resets correctly. |
-| **Remembers devices** | Limits, whitelist, blocks and counters are kept in flash, written every 5 minutes to spare it. |
+| **Remembers devices** | Limits, whitelist, blocks and counters are kept in flash, written every minute, and only when something changed. |
 
 ### Monitoring
 
-- **Live dashboard** with usage bars, online state and an Arabic / English switch (full right-to-left).
+- **Router-style dashboard** with a login screen: Overview, Users, Apps, Speed, Settings, System. Arabic / English, full right-to-left.
+- **Named users** ("User 1, 2 ..." and your own names) with usage per category and per app (YouTube, TikTok, Facebook, WhatsApp, Telegram, Google, Snapchat ...). Teach it new domains from the dashboard.
+- **Speed limits** for the whole network, a default per user, and per user.
+- **Update over WiFi**: send `ota-firmware.bin` or `ota-ui.bin` from System > Update. A bad firmware rolls back by itself.
 - **Domain log** of the latest lookups, per client.
 - **Ping** from the repeater, without freezing anything.
 - **Telegram bot** for status, block, unblock, whitelist, quota and ping.
 
 ### Safety
 
-- **Login on everything.** The dashboard, the API and the live WebSocket all need the dashboard password, and the page warns you until you change the default.
+- **Login on everything.** The dashboard, the API and the live WebSocket all need a signed-in session (password, lock-out after 5 wrong tries), and the page warns you until you change the default.
 - **Settings are validated** before they are saved, so a bad password cannot lock you out.
 - **Recovery button.** Hold **BOOT** for 5 seconds to wipe the saved settings.
 - **Cross-site protection** on every state-changing call.
@@ -80,7 +83,7 @@ Phone / laptop  ──WiFi──▶  ESP32 soft-AP ──▶ lwIP (NAT) ──�
                   ├─ frames to a device    → download count by destination MAC
                   └─ blocked device?       → frame dropped
                                    │
-   quota table (RAM, locked) ──▶ flash every 5 min     ──▶ dashboard + Telegram
+   quota table (RAM, locked) ──▶ flash every 1 min     ──▶ dashboard + Telegram
    DNS proxy task   ── logs every lookup, forwards it to the upstream DNS
    Telegram task    ── commands from the owner chat only
 ```
@@ -89,7 +92,7 @@ The full picture is in the [Architecture overview](docs/architecture/overview.md
 
 ## Install
 
-> Version `0.2.0-beta`. Requires a classic **ESP32** board with 4 MB flash.
+> Version `0.3.0-beta`. Requires a classic **ESP32** board with 4 MB flash.
 
 ### 1. Get the firmware
 

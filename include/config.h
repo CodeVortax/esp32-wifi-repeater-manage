@@ -1,6 +1,6 @@
 #pragma once
 
-#define FW_VERSION               "0.2.0-beta"
+#define FW_VERSION               "0.3.0-beta"
 
 // These are only the FIRST-BOOT defaults. After the first boot everything
 // below marked (NVS) lives in flash and is changed from the Settings page.
@@ -21,11 +21,29 @@
 #define WEB_ADMIN_PASSWORD       "admin1234"
 #define WEB_SERVER_PORT          80
 
-// ---------------- Quota ----------------
+// Login page: a session cookie replaces the browser's Basic-auth popup.
+#define SESSION_MAX              4                       // logged-in browsers at once
+#define SESSION_TTL_MS           (12UL * 3600UL * 1000UL) // idle time before you must log in again
+#define LOGIN_MAX_FAILS          5                       // wrong passwords in a row, per device...
+#define LOGIN_LOCK_MS            60000UL                 // ...then that device waits this long
+
+// ---------------- Users, quota and speed ----------------
 #define DAILY_QUOTA_MB_DEFAULT   1024UL     // 1 GB/day per device; 0 = unlimited
-#define MAX_TRACKED_DEVICES      10
+#define MAX_TRACKED_DEVICES      16
 #define NVS_QUOTA_NAMESPACE      "quota"
-#define QUOTA_SAVE_INTERVAL_MS   (5UL * 60UL * 1000UL)   // flash-wear friendly
+// Counters are written at most once a minute, and only when something changed.
+// Names, limits and speeds are written at once (they are tiny and rare).
+#define QUOTA_SAVE_INTERVAL_MS   (60UL * 1000UL)
+#define MAX_SPEED_KBPS           1000000UL  // 1 Gbit/s, the largest value the API accepts
+
+// ---------------- App recognition ----------------
+#define MAX_CUSTOM_RULES         24
+#define UNKNOWN_DOMAIN_MAX       40
+
+// ---------------- Updates over WiFi ----------------
+// After a firmware update the new version must stay up this long to count as
+// healthy. If it reboots 3 times before that, the previous version is restored.
+#define OTA_HEALTHY_MS           60000UL
 
 // ---------------- Time / daily reset ----------------
 // POSIX TZ string. Egypt: UTC+2, DST from the last Friday of April to the

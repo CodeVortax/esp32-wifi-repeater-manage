@@ -25,3 +25,13 @@ sha256sum -c esp32-wifi-repeater-<ref>.bin.sha256
 ## Development flashing
 
 With PlatformIO: `./build.sh upload` for the firmware and `./build.sh uploadfs` for the web UI.
+
+## Updating without a cable (0.3.0 and later)
+
+The first install of 0.3.0 changes the partition table, so flash the full image at `0x0` once (settings reset). After that:
+
+1. Download `...-ota-firmware.bin` (and `...-ota-ui.bin` when the dashboard changed) from the CI artifact, or run `./build.sh ota`.
+2. Open the dashboard, **System > Update**, pick the file, **Upload**.
+3. The repeater restarts by itself. If the new firmware fails to start 3 times in a row, it returns to the previous one.
+
+Counters are saved just before the restart.

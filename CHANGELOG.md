@@ -2,6 +2,25 @@
 
 Versions follow `FW_VERSION` in `include/config.h`. All releases are betas.
 
+## 0.3.0-beta
+
+### Added
+- **Router-style dashboard with a login screen.** Sign in with the dashboard password (session cookie, 12 h, lock-out after 5 wrong tries per address). Pages: Overview, Users, Apps, Speed, Settings, System. Arabic / English, right-to-left.
+- **Named users.** Every device is "User 1, 2, ..." in the order it first appeared. Rename it from the dashboard; the name is stored on the repeater, not in your browser.
+- **Usage per app and category** (video, social, messaging, browsing, music, gaming, downloads, other), per user, from DNS names, CNAMEs, remembered IPs and Telegram's address ranges. Unknown domains are listed so you can teach the repeater (custom rules, kept in flash).
+- **Speed limits**: for the whole network, a default per user, and per user (Mbps, separate down / up).
+- **Update over WiFi** (System > Update) for the firmware and for the dashboard files, with automatic roll-back if the new firmware fails to start 3 times.
+- Host-side unit tests (`make -C test`, with sanitizers) run in CI.
+
+### Changed
+- Counters are saved **every minute** (only when something changed), as atomic checksummed blobs, and once more before every restart.
+- New partition table (`partitions.csv`): two 1.75 MB app slots, 320 KB SPIFFS. **The first install of this version needs a full flash at 0x0 and resets saved settings once.** Later versions can be installed from the dashboard.
+- HTTP Basic auth was replaced by the login page and a session cookie.
+
+### Known limits
+- App recognition is DNS based. Phones with Private DNS / DoH and VPN users hide their lookups; that traffic is counted as "Other".
+- The app table was assembled from public domain lists and is only partly verified on real traffic. Use Apps > "Domains I do not know yet" to fix gaps.
+
 ## 0.2.0-beta
 
 ### Fixed

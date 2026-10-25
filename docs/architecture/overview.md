@@ -46,9 +46,11 @@ Rules the code follows: **no allocation and no `Serial` inside a spinlock**, **n
 | Where | What | When it is written |
 |---|---|---|
 | NVS namespace `netcfg` | WiFi names and passwords, dashboard password, Telegram | When you save Settings |
-| NVS namespace `quota` | Known devices, limits, flags, counters, the day of the last reset | Every 5 minutes if counters changed, and soon after any change you make |
-| SPIFFS | `index.html` | When you flash |
+| NVS namespace `quota` | Known devices, limits, flags, counters, the day of the last reset | Every minute if counters changed (atomic, checksummed blobs `cfg3` / `use3`), soon after any change you make, and before every restart |
+| NVS namespace `apprules` | Your custom domain rules | When you add or remove one |
+| NVS namespace `ota` | Boot counter for roll-back | At every boot, cleared once healthy |
+| SPIFFS | `index.html`, `login.html` | When you flash or send `ota-ui.bin` |
 
 ## Partitions
 
-`min_spiffs.csv`: two 1.9 MB app slots (room for OTA later), a 128 KB SPIFFS for the dashboard and a small core-dump area. The whole table fits a 4 MB flash.
+`partitions.csv`: `otadata` plus two 1.75 MB app slots (OTA), a 320 KB SPIFFS for the dashboard and a 64 KB core-dump area. The whole table fits a 4 MB flash.

@@ -8,9 +8,13 @@ bootloader + partition table + app + SPIFFS into ONE file:
 
     dist/<env>-merged.bin
 
-Flash that single file at offset 0x0 (ESP Web Tools, esptool, ...).
+Flash that single file at offset 0x0 (ESP Web Tools, esptool, ...). It also writes the two
+files used by Update over WiFi (dashboard > System > Update):
+
+    dist/ota-firmware.bin   the app only
+    dist/ota-ui.bin         the dashboard files only
 Every offset and size comes from the board and from the partition table, so
-changing min_spiffs.csv or the board needs no edit here.
+changing partitions.csv or the board needs no edit here.
 """
 import hashlib
 import subprocess
@@ -114,11 +118,15 @@ def merge(*_args, **_kwargs):
 
     # The 2nd-stage bootloader lives at 0x1000 on ESP32/ESP32-S2, 0x0 on newer chips.
     bootloader_offset = 0x1000 if chip in ("esp32", "esp32s2") else 0x2000 if chip == "esp32c5" else 0x0
+    fw_path = find("firmware.bin")
+    fs_path = find("spiffs.bin")
+    if fw_path.stat().st_size > parts["app0"][1]:
+        raise SystemExit(f"[webflash] firmware ({fw_path.stat().st_size} B) is bigger than the app0 partition ({parts['app0'][1]} B)")
     pieces = [
         (bootloader_offset, find("bootloader.bin")),
         (0x8000, find("partitions.bin")),
-        (parts["app0"][0], find("firmware.bin")),
-        (parts["spiffs"][0], find("spiffs.bin")),
+        (parts["app0"][0], fw_path),
+        (parts["spiffs"][0], fs_path),
     ]
 
     boot_app0 = find_boot_app0()
@@ -152,9 +160,18 @@ def merge(*_args, **_kwargs):
     print("[webflash]", " ".join(cmd))
     subprocess.check_call(cmd)
 
-    digest = hashlib.sha256(out.read_bytes()).hexdigest()
-    (DIST_DIR / f"{out.name}.sha256").write_text(f"{digest}  {out.name}\n")
+    def publish(src: Path, name: str):
+        dst = DIST_DIR / name
+        dst.write_bytes(src.read_bytes())
+        digest = hashlib.sha256(dst.read_bytes()).hexdigest()
+        (DIST_DIR / f"{name}.sha256").write_text(f"{digest}  {name}\n")
+        return dst
+
+    publish(out, out.name)
+    ota_fw = publish(fw_path, "ota-firmware.bin")
+    ota_ui = publish(fs_path, "ota-ui.bin")
     print(f"[webflash] OK -> {out}  ({out.stat().st_size} bytes)")
+    print(f"[webflash] update over WiFi: {ota_fw.name} ({ota_fw.stat().st_size} B), {ota_ui.name} ({ota_ui.stat().st_size} B)")
     print(f"[webflash] flash it at offset 0x0:  esptool.py write_flash 0x0 {out.name}")
     sys.stdout.flush()
 

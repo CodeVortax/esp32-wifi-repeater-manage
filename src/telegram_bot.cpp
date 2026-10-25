@@ -6,17 +6,24 @@
 #include "wifi_repeater.h"
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
+#include <new>
 
 static String formatStatus() {
-    DeviceUsage devs[MAX_TRACKED_DEVICES];
+    // Heap, not stack: the device struct is large and this task's stack is small.
+    DeviceUsage *devs = new (std::nothrow) DeviceUsage[MAX_TRACKED_DEVICES];
+    if (!devs) return "Out of memory, try again.";
     int n = quota_snapshot(devs, MAX_TRACKED_DEVICES);
-    if (n == 0) return "No devices seen yet.";
+    if (n == 0) { delete[] devs; return "No devices seen yet."; }
 
     String out = "Devices:\n";
     for (int i = 0; i < n; i++) {
-        char line[128];
-        snprintf(line, sizeof(line), "%s %s  %.0f/%s MB %s%s\n",
+        char label[48];
+        if (devs[i].name[0]) snprintf(label, sizeof(label), "%s", devs[i].name);
+        else                 snprintf(label, sizeof(label), "User %u", devs[i].userNo);
+        char line[160];
+        snprintf(line, sizeof(line), "%s %s (%s)  %.0f/%s MB %s%s\n",
                  devs[i].online ? "●" : "○",
+                 label,
                  devs[i].macStr,
                  devs[i].bytesToday / (1024.0 * 1024.0),
                  devs[i].dailyLimitMB ? String(devs[i].dailyLimitMB).c_str() : "unlimited",
@@ -24,6 +31,7 @@ static String formatStatus() {
                  devs[i].whitelisted ? "[WHITELIST]" : "");
         out += line;
     }
+    delete[] devs;
     return out;
 }
 

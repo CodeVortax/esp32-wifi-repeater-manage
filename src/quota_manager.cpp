@@ -4,6 +4,8 @@
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <esp_netif_net_stack.h>   // esp_netif_get_netif_impl()
+#include <esp_timer.h>
+#include <esp_crc.h>
 #include <Preferences.h>
 #include <time.h>
 
@@ -13,27 +15,39 @@ extern "C" {
 }
 
 // ---------------------------------------------------------------------------
-// How counting works
+// How counting and limiting work
 //
 // We hook the lwIP netif of the soft-AP and look at every Ethernet frame that
 // crosses it:
 //   input      (client -> ESP)  source MAC      = offset 6  -> upload
 //   linkoutput (ESP -> client)  destination MAC = offset 0  -> download
 // All NAT-ed internet traffic goes through here in both directions, only for
-// stations really associated with our AP. A blocked station's frames are
-// dropped right here, so blocking works even while it stays associated.
+// stations really associated with our AP. For each frame we
+//   1. look up which app the REMOTE address belongs to (apps_lookupIp: filled from
+//      the DNS answers the dns task sees) and add the bytes to that app,
+//   2. drop it if the device is blocked,
+//   3. drop it if it is over the user's speed cap or the global cap (token buckets),
+//   4. otherwise count it for the device, and block the device at its daily quota.
 // ---------------------------------------------------------------------------
 
 static DeviceUsage devices[MAX_TRACKED_DEVICES];
+static uint64_t    appBytes[MAX_TRACKED_DEVICES][APP_COUNT];
+static SpeedConfig speed = {0, 0, 0, 0};
+static Bucket      gDl = {}, gUl = {};                 // the "everybody together" buckets
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
-static volatile bool dirty         = false;   // counters changed since last save
-static volatile bool saveRequested = false;   // config changed -> save soon
-static int32_t       lastResetKey  = -1;      // year*1000 + yday of last reset
-static bool          hooksOk       = false;
+static volatile bool useDirty    = false;   // counters changed since the last save
+static volatile bool useSaveNow  = false;   // save the counters at once (block, midnight)
+static volatile bool cfgDirty    = false;   // names / limits / flags changed -> save at once
+static int32_t       lastResetKey = -1;     // year*1000 + yday of the last reset
+static bool          hooksOk      = false;
+static uint8_t       nextUserNo   = 1;
+static uint32_t      apIpNet      = 0;      // our own address: traffic to it is never limited
 
 static netif_input_fn      origInput      = nullptr;
 static netif_linkoutput_fn origLinkOutput = nullptr;
+
+#define NS_SPEED NVS_QUOTA_NAMESPACE
 
 // ---- MAC helpers ------------------------------------------------------------
 
@@ -64,13 +78,21 @@ static int findSlotLocked(const uint8_t *mac) {
     return -1;
 }
 
-static void initSlotLocked(int i, const uint8_t *mac) {
+static void initSlotLocked(int i, const uint8_t *mac, bool newUser) {
     memset(&devices[i], 0, sizeof(DeviceUsage));
+    memset(appBytes[i], 0, sizeof(appBytes[i]));
     memcpy(devices[i].mac, mac, 6);
     macToStr(mac, devices[i].macStr);
     devices[i].dailyLimitMB = DAILY_QUOTA_MB_DEFAULT;
+    devices[i].downKbps     = SPEED_DEFAULT;
+    devices[i].upKbps       = SPEED_DEFAULT;
     devices[i].active       = true;
     devices[i].lastSeenMs   = millis();
+    if (newUser) {
+        devices[i].userNo = nextUserNo;
+        nextUserNo = (nextUserNo >= 250) ? 1 : nextUserNo + 1;
+        cfgDirty = true;
+    }
 }
 
 static int findOrCreateLocked(const uint8_t *mac) {
@@ -78,14 +100,14 @@ static int findOrCreateLocked(const uint8_t *mac) {
     if (i >= 0) return i;
 
     for (i = 0; i < MAX_TRACKED_DEVICES; i++) {
-        if (!devices[i].active) { initSlotLocked(i, mac); dirty = true; return i; }
+        if (!devices[i].active) { initSlotLocked(i, mac, true); useDirty = true; return i; }
     }
 
     // Table full: recycle the least recently seen slot, preferring ones that
-    // carry no manual settings (whitelist / manual block).
+    // carry no manual settings (a name, the whitelist or a manual block).
     int victim = -1;
     for (i = 0; i < MAX_TRACKED_DEVICES; i++) {
-        bool precious = devices[i].whitelisted || devices[i].blocked;
+        bool precious = devices[i].name[0] || devices[i].whitelisted || devices[i].blocked;
         if (precious) continue;
         if (victim < 0 || (int32_t)(devices[victim].lastSeenMs - devices[i].lastSeenMs) > 0) victim = i;
     }
@@ -94,16 +116,40 @@ static int findOrCreateLocked(const uint8_t *mac) {
         for (i = 1; i < MAX_TRACKED_DEVICES; i++)
             if ((int32_t)(devices[victim].lastSeenMs - devices[i].lastSeenMs) > 0) victim = i;
     }
-    initSlotLocked(victim, mac);
-    dirty = true;
+    initSlotLocked(victim, mac, true);
+    useDirty = true;
     return victim;
 }
 
 // ---- accounting (runs in the lwIP / Wi-Fi task: keep it short) --------------
 
-// Returns true when the frame must be dropped (device is blocked).
-static bool account(const uint8_t *mac, uint32_t len) {
+static inline uint16_t nowMinutes() { return (uint16_t)(millis() / 60000UL); }
+
+static inline uint32_t rateBytesPerSec(uint32_t kbps, uint32_t defKbps) {
+    uint32_t k = (kbps == SPEED_DEFAULT) ? defKbps : kbps;
+    return k * 125u;                                   // kbit/s -> bytes/s
+}
+
+// Returns true when the frame must be dropped (blocked or over a speed cap).
+//   frame/plen: first buffer of the frame (Ethernet header first), len: whole frame
+static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool upload) {
+    const uint8_t *mac = upload ? frame + 6 : frame;
     if (mac[0] & 0x01) return false;               // broadcast / multicast
+
+    // The remote address decides the app. Offsets: 12 ethertype, 14 IPv4 header, +12 src, +16 dst.
+    uint32_t localIp = 0, remoteIp = 0;
+    bool isIp4 = false;
+    if (plen >= 34 && frame[12] == 0x08 && frame[13] == 0x00 && (frame[14] >> 4) == 4) {
+        uint32_t s, d;
+        memcpy(&s, frame + 26, 4);
+        memcpy(&d, frame + 30, 4);
+        isIp4    = true;
+        localIp  = upload ? s : d;
+        remoteIp = upload ? d : s;
+    }
+    bool toSelf = isIp4 && apIpNet != 0 && remoteIp == apIpNet;     // the dashboard, DNS, DHCP
+    uint8_t app = (isIp4 && !toSelf) ? apps_lookupIp(remoteIp, nowMinutes()) : (uint8_t)APP_OTHER;
+    uint64_t nowUs = (uint64_t)esp_timer_get_time();
 
     bool drop = false;
     portENTER_CRITICAL(&mux);
@@ -111,17 +157,38 @@ static bool account(const uint8_t *mac, uint32_t len) {
     if (i >= 0) {
         DeviceUsage &d = devices[i];
         d.lastSeenMs = millis();
+        if (isIp4 && localIp != 0) d.ip = localIp;
+
         if (d.blocked && !d.whitelisted) {
             drop = true;
         } else {
-            d.bytesToday   += len;
-            d.bytesAllTime += len;
-            dirty = true;
-            if (!d.whitelisted && !d.quotaOverride && d.dailyLimitMB > 0 &&
-                d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL) {
-                d.blocked     = true;
-                d.kickPending = true;
-                saveRequested = true;
+            if (!d.whitelisted && !toSelf) {
+                uint32_t devRate = rateBytesPerSec(upload ? d.upKbps : d.downKbps,
+                                                   upload ? speed.defaultUpKbps : speed.defaultDownKbps);
+                uint32_t allRate = (upload ? speed.globalUpKbps : speed.globalDownKbps) * 125u;
+                Bucket &devB = upload ? d.ul : d.dl;
+                Bucket &allB = upload ? gUl : gDl;
+                if (devRate) bucket_refill(devB, devRate, nowUs);
+                if (allRate) bucket_refill(allB, allRate, nowUs);
+                if ((devRate && !bucket_has(devB, len)) || (allRate && !bucket_has(allB, len))) {
+                    drop = true;                                    // over the cap: TCP will slow down
+                } else {
+                    if (devRate) bucket_take(devB, len);
+                    if (allRate) bucket_take(allB, len);
+                }
+            }
+            if (!drop) {
+                d.bytesToday   += len;
+                d.bytesAllTime += len;
+                appBytes[i][app] += len;
+                useDirty = true;
+                if (!d.whitelisted && !d.quotaOverride && d.dailyLimitMB > 0 &&
+                    d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL) {
+                    d.blocked     = true;
+                    d.kickPending = true;
+                    useSaveNow    = true;
+                    cfgDirty      = true;
+                }
             }
         }
     }
@@ -130,7 +197,7 @@ static bool account(const uint8_t *mac, uint32_t len) {
 }
 
 static err_t hookedInput(struct pbuf *p, struct netif *inp) {
-    if (p && p->len >= 14 && account((const uint8_t *)p->payload + 6, p->tot_len)) {
+    if (p && p->len >= 14 && account((const uint8_t *)p->payload, p->len, p->tot_len, true)) {
         pbuf_free(p);
         return ERR_OK;
     }
@@ -138,7 +205,7 @@ static err_t hookedInput(struct pbuf *p, struct netif *inp) {
 }
 
 static err_t hookedLinkOutput(struct netif *n, struct pbuf *p) {
-    if (p && p->len >= 14 && account((const uint8_t *)p->payload, p->tot_len)) {
+    if (p && p->len >= 14 && account((const uint8_t *)p->payload, p->len, p->tot_len, false)) {
         return ERR_OK;                              // silently dropped
     }
     return origLinkOutput(n, p);
@@ -173,65 +240,185 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 }
 
 // ---- persistence ------------------------------------------------------------
+//
+// Two blobs, each written in ONE NVS call (NVS makes that atomic, so a power cut
+// leaves either the old blob or the new one) and each carrying a CRC32 as a second guard:
+//   "cfg3"  names, limits, speeds, flags: tiny, written the moment you change something
+//   "use3"  the counters: written at most once a minute, and only when they changed
+// If a blob fails its checks it is ignored, and the other one still loads.
 
-struct PersistRec {
+#define CFG_MAGIC 0x33474643u   // "CFG3"
+#define USE_MAGIC 0x33455355u   // "USE3"
+
+struct CfgHdr { uint32_t magic; uint32_t crc; uint16_t count; uint8_t nextUserNo; uint8_t pad; };
+struct CfgRec {
     uint8_t  mac[6];
-    uint8_t  flags;        // bit0 whitelisted, bit1 blocked
-    uint8_t  pad;
+    uint8_t  flags;            // bit0 whitelisted, bit1 blocked
+    uint8_t  userNo;
     uint32_t limitMB;
+    uint32_t downKbps;
+    uint32_t upKbps;
+    char     name[NAME_MAX_BYTES + 1];
+    uint8_t  pad[3];
+};
+struct UseHdr { uint32_t magic; uint32_t crc; int32_t dayKey; uint16_t count; uint16_t appCount; };
+struct UseRec {
+    uint8_t  mac[6];
+    uint16_t pad;
     uint64_t today;
     uint64_t allTime;
+    uint32_t appKB[APP_COUNT];
 };
-#define PERSIST_VERSION 2
 
-static void saveToNvs(int32_t dayKey) {
-    PersistRec recs[MAX_TRACKED_DEVICES];
+static void saveCfg() {
+    CfgRec *recs = (CfgRec *)calloc(MAX_TRACKED_DEVICES, sizeof(CfgRec));
+    if (!recs) return;
+    int n = 0;
+    uint8_t nu;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+        if (!devices[i].active) continue;
+        CfgRec &r = recs[n++];
+        memcpy(r.mac, devices[i].mac, 6);
+        r.flags    = (devices[i].whitelisted ? 1 : 0) | (devices[i].blocked ? 2 : 0);
+        r.userNo   = devices[i].userNo;
+        r.limitMB  = devices[i].dailyLimitMB;
+        r.downKbps = devices[i].downKbps;
+        r.upKbps   = devices[i].upKbps;
+        memcpy(r.name, devices[i].name, sizeof(r.name));
+    }
+    nu = nextUserNo;
+    cfgDirty = false;
+    portEXIT_CRITICAL(&mux);
+
+    size_t bytes = sizeof(CfgHdr) + n * sizeof(CfgRec);
+    uint8_t *buf = (uint8_t *)malloc(bytes);
+    if (buf) {
+        CfgHdr h = {};
+        h.magic = CFG_MAGIC; h.count = n; h.nextUserNo = nu;
+        h.crc = esp_crc32_le(0, (const uint8_t *)recs, n * sizeof(CfgRec));
+        memcpy(buf, &h, sizeof(h));
+        memcpy(buf + sizeof(h), recs, n * sizeof(CfgRec));
+        Preferences p;
+        p.begin(NVS_QUOTA_NAMESPACE, false);
+        p.putBytes("cfg3", buf, bytes);
+        p.end();
+        free(buf);
+    }
+    free(recs);
+}
+
+static void saveUse(int32_t dayKey) {
+    UseRec *recs = (UseRec *)calloc(MAX_TRACKED_DEVICES, sizeof(UseRec));
+    if (!recs) return;
     int n = 0;
     portENTER_CRITICAL(&mux);
     for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
         if (!devices[i].active) continue;
-        PersistRec &r = recs[n++];
-        memset(&r, 0, sizeof(r));
+        UseRec &r = recs[n++];
         memcpy(r.mac, devices[i].mac, 6);
-        r.flags   = (devices[i].whitelisted ? 1 : 0) | (devices[i].blocked ? 2 : 0);
-        r.limitMB = devices[i].dailyLimitMB;
         r.today   = devices[i].bytesToday;
         r.allTime = devices[i].bytesAllTime;
+        for (int a = 0; a < APP_COUNT; a++) {
+            uint64_t kb = appBytes[i][a] >> 10;
+            r.appKB[a] = kb > 0xFFFFFFFFULL ? 0xFFFFFFFFu : (uint32_t)kb;
+        }
     }
-    dirty = false;
-    saveRequested = false;
+    useDirty = false;
+    useSaveNow = false;
     portEXIT_CRITICAL(&mux);
 
-    Preferences p;
-    p.begin(NVS_QUOTA_NAMESPACE, false);
-    p.putUChar("ver", PERSIST_VERSION);
-    p.putInt("day", dayKey);
-    if (n > 0) p.putBytes("devs", recs, n * sizeof(PersistRec));
-    else       p.remove("devs");
-    p.end();
+    size_t bytes = sizeof(UseHdr) + n * sizeof(UseRec);
+    uint8_t *buf = (uint8_t *)malloc(bytes);
+    if (buf) {
+        UseHdr h = {};
+        h.magic = USE_MAGIC; h.dayKey = dayKey; h.count = n; h.appCount = APP_COUNT;
+        h.crc = esp_crc32_le(0, (const uint8_t *)recs, n * sizeof(UseRec));
+        memcpy(buf, &h, sizeof(h));
+        memcpy(buf + sizeof(h), recs, n * sizeof(UseRec));
+        Preferences p;
+        p.begin(NVS_QUOTA_NAMESPACE, false);
+        p.putBytes("use3", buf, bytes);
+        p.end();
+        free(buf);
+    }
+    free(recs);
+}
+
+// Reads a blob and checks size, magic and CRC. Caller frees the result.
+static uint8_t *readBlob(Preferences &p, const char *key, uint32_t magic, size_t hdrSize, size_t recSize,
+                         uint16_t &count, uint32_t &crcStored) {
+    size_t bytes = p.getBytesLength(key);
+    if (bytes < hdrSize || bytes > hdrSize + MAX_TRACKED_DEVICES * recSize) return nullptr;
+    uint8_t *buf = (uint8_t *)malloc(bytes);
+    if (!buf) return nullptr;
+    if (p.getBytes(key, buf, bytes) != bytes) { free(buf); return nullptr; }
+    uint32_t m; memcpy(&m, buf, 4);
+    uint16_t c; memcpy(&c, buf + (magic == CFG_MAGIC ? 8 : 12), 2);
+    memcpy(&crcStored, buf + 4, 4);
+    if (m != magic || bytes != hdrSize + (size_t)c * recSize ||
+        esp_crc32_le(0, buf + hdrSize, c * recSize) != crcStored) { free(buf); return nullptr; }
+    count = c;
+    return buf;
 }
 
 static int32_t loadFromNvs() {
     Preferences p;
     p.begin(NVS_QUOTA_NAMESPACE, false);     // read-write so a first boot does not log "nvs_open failed: NOT_FOUND"
-    int32_t day = -1;
-    if (p.getUChar("ver", 0) == PERSIST_VERSION) {
-        day = p.getInt("day", -1);
-        PersistRec recs[MAX_TRACKED_DEVICES];
-        size_t bytes = p.getBytes("devs", recs, sizeof(recs));
-        int n = bytes / sizeof(PersistRec);
+
+    uint16_t count = 0; uint32_t crc = 0;
+    uint8_t *cfg = readBlob(p, "cfg3", CFG_MAGIC, sizeof(CfgHdr), sizeof(CfgRec), count, crc);
+    if (cfg) {
+        CfgHdr h; memcpy(&h, cfg, sizeof(h));
         portENTER_CRITICAL(&mux);
-        for (int i = 0; i < n && i < MAX_TRACKED_DEVICES; i++) {
-            initSlotLocked(i, recs[i].mac);
-            devices[i].whitelisted  = recs[i].flags & 1;
-            devices[i].blocked      = recs[i].flags & 2;
-            devices[i].dailyLimitMB = recs[i].limitMB;
-            devices[i].bytesToday   = recs[i].today;
-            devices[i].bytesAllTime = recs[i].allTime;
+        nextUserNo = h.nextUserNo ? h.nextUserNo : 1;
+        for (int i = 0; i < count && i < MAX_TRACKED_DEVICES; i++) {
+            CfgRec r; memcpy(&r, cfg + sizeof(CfgHdr) + i * sizeof(CfgRec), sizeof(r));
+            initSlotLocked(i, r.mac, false);
+            devices[i].whitelisted  = r.flags & 1;
+            devices[i].blocked      = r.flags & 2;
+            devices[i].userNo       = r.userNo;
+            devices[i].dailyLimitMB = r.limitMB;
+            devices[i].downKbps     = r.downKbps;
+            devices[i].upKbps       = r.upKbps;
+            r.name[NAME_MAX_BYTES] = '\0';
+            memcpy(devices[i].name, r.name, sizeof(devices[i].name));
             devices[i].lastSeenMs   = 0;
         }
         portEXIT_CRITICAL(&mux);
+        free(cfg);
     }
+
+    int32_t day = -1;
+    uint8_t *use = readBlob(p, "use3", USE_MAGIC, sizeof(UseHdr), sizeof(UseRec), count, crc);
+    if (use) {
+        UseHdr h; memcpy(&h, use, sizeof(h));
+        day = h.dayKey;
+        portENTER_CRITICAL(&mux);
+        for (int k = 0; k < count; k++) {
+            UseRec r; memcpy(&r, use + sizeof(UseHdr) + k * sizeof(UseRec), sizeof(r));
+            int i = findSlotLocked(r.mac);
+            if (i < 0) {                                           // counters without settings: still keep them
+                for (i = 0; i < MAX_TRACKED_DEVICES && devices[i].active; i++) {}
+                if (i >= MAX_TRACKED_DEVICES) continue;
+                initSlotLocked(i, r.mac, true);
+                devices[i].lastSeenMs = 0;
+            }
+            devices[i].bytesToday   = r.today;
+            devices[i].bytesAllTime = r.allTime;
+            if (h.appCount == APP_COUNT)
+                for (int a = 0; a < APP_COUNT; a++) appBytes[i][a] = (uint64_t)r.appKB[a] << 10;
+        }
+        portEXIT_CRITICAL(&mux);
+        free(use);
+    }
+
+    portENTER_CRITICAL(&mux);
+    speed.globalDownKbps  = p.getULong("g_dn", 0);
+    speed.globalUpKbps    = p.getULong("g_up", 0);
+    speed.defaultDownKbps = p.getULong("d_dn", 0);
+    speed.defaultUpKbps   = p.getULong("d_up", 0);
+    portEXIT_CRITICAL(&mux);
     p.end();
     return day;
 }
@@ -240,7 +427,9 @@ static int32_t loadFromNvs() {
 
 void quota_init() {
     memset(devices, 0, sizeof(devices));
+    memset(appBytes, 0, sizeof(appBytes));
     lastResetKey = loadFromNvs();
+    apIpNet = (uint32_t)WiFi.softAPIP();
     WiFi.onEvent(onWifiEvent);
     installHooks();
 }
@@ -281,16 +470,22 @@ void quota_loop() {
             // Also handles "rebooted across midnight": the saved key is older.
             if (lastResetKey != -1) quota_resetDaily();
             lastResetKey = key;
-            saveRequested = true;
+            useSaveNow = true;
         }
     }
 
-    static uint32_t lastSave = 0;
-    bool due = (millis() - lastSave) > QUOTA_SAVE_INTERVAL_MS;
-    if (saveRequested || (dirty && due)) {
-        saveToNvs(lastResetKey);
-        lastSave = millis();
+    if (cfgDirty) saveCfg();
+
+    static uint32_t lastUseSave = 0;
+    if (useSaveNow || (useDirty && (millis() - lastUseSave) >= QUOTA_SAVE_INTERVAL_MS)) {
+        saveUse(lastResetKey);
+        lastUseSave = millis();
     }
+}
+
+void quota_saveNow() {
+    saveCfg();
+    saveUse(lastResetKey);
 }
 
 int quota_snapshot(DeviceUsage *out, int maxCount) {
@@ -301,7 +496,11 @@ int quota_snapshot(DeviceUsage *out, int maxCount) {
     int n = 0;
     portENTER_CRITICAL(&mux);
     for (int i = 0; i < MAX_TRACKED_DEVICES && n < maxCount; i++) {
-        if (devices[i].active) out[n++] = devices[i];
+        if (!devices[i].active) continue;
+        out[n] = devices[i];
+        memset(out[n].catToday, 0, sizeof(out[n].catToday));
+        for (int a = 0; a < APP_COUNT; a++) out[n].catToday[apps_category(a)] += appBytes[i][a];
+        n++;
     }
     portEXIT_CRITICAL(&mux);
 
@@ -314,6 +513,39 @@ int quota_snapshot(DeviceUsage *out, int maxCount) {
     return n;
 }
 
+bool quota_appBytes(const char *macStr, uint64_t *out) {
+    memset(out, 0, APP_COUNT * sizeof(uint64_t));
+    uint8_t mac[6];
+    if (macStr && !parseMac(macStr, mac)) return false;
+    bool found = (macStr == nullptr);
+    portENTER_CRITICAL(&mux);
+    if (macStr) {
+        int i = findSlotLocked(mac);
+        if (i >= 0) { memcpy(out, appBytes[i], APP_COUNT * sizeof(uint64_t)); found = true; }
+    } else {
+        for (int i = 0; i < MAX_TRACKED_DEVICES; i++)
+            if (devices[i].active) for (int a = 0; a < APP_COUNT; a++) out[a] += appBytes[i][a];
+    }
+    portEXIT_CRITICAL(&mux);
+    return found;
+}
+
+bool quota_labelForIp(uint32_t ip, char *out, size_t outSize) {
+    if (ip == 0 || outSize == 0) return false;
+    bool found = false;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+        if (devices[i].active && devices[i].ip == ip) {
+            if (devices[i].name[0]) snprintf(out, outSize, "%s", devices[i].name);
+            else                    snprintf(out, outSize, "User %u", devices[i].userNo);
+            found = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&mux);
+    return found;
+}
+
 // Applies `fn` to the slot for macStr. Returns false when the device is unknown.
 template <typename Fn>
 static bool withDevice(const char *macStr, Fn fn) {
@@ -322,7 +554,7 @@ static bool withDevice(const char *macStr, Fn fn) {
     bool found = false;
     portENTER_CRITICAL(&mux);
     int i = findSlotLocked(mac);
-    if (i >= 0) { fn(devices[i]); found = true; dirty = true; saveRequested = true; }
+    if (i >= 0) { fn(devices[i]); found = true; cfgDirty = true; }
     portEXIT_CRITICAL(&mux);
     return found;
 }
@@ -360,15 +592,77 @@ bool quota_setWhitelist(const char *macStr, bool enabled) {
     });
 }
 
+bool quota_setName(const char *macStr, const char *name) {
+    if (!name) return false;
+    char clean[NAME_MAX_BYTES + 1];
+    size_t n = 0;
+    while (*name == ' ') name++;                       // trim the start
+    for (; *name; name++) {
+        uint8_t c = (uint8_t)*name;
+        if (c < 0x20 || c == 0x7F) return false;       // no control characters
+        if (n >= NAME_MAX_BYTES) return false;         // too long (UTF-8 bytes, not characters)
+        clean[n++] = (char)c;
+    }
+    while (n > 0 && clean[n - 1] == ' ') n--;          // trim the end
+    clean[n] = '\0';
+    return withDevice(macStr, [&](DeviceUsage &d) {
+        memcpy(d.name, clean, n + 1);
+    });
+}
+
+static bool validSpeed(uint32_t v) { return v == SPEED_DEFAULT || v <= MAX_SPEED_KBPS; }
+
+bool quota_setDeviceSpeed(const char *macStr, uint32_t downKbps, uint32_t upKbps) {
+    if (!validSpeed(downKbps) || !validSpeed(upKbps)) return false;
+    return withDevice(macStr, [&](DeviceUsage &d) {
+        d.downKbps = downKbps;
+        d.upKbps   = upKbps;
+        d.dl.init  = false;                            // start with a full bucket under the new rate
+        d.ul.init  = false;
+    });
+}
+
+SpeedConfig quota_getSpeedConfig() {
+    SpeedConfig c;
+    portENTER_CRITICAL(&mux);
+    c = speed;
+    portEXIT_CRITICAL(&mux);
+    return c;
+}
+
+void quota_setSpeedConfig(const SpeedConfig &in) {
+    SpeedConfig c = in;
+    if (c.globalDownKbps  > MAX_SPEED_KBPS) c.globalDownKbps  = MAX_SPEED_KBPS;
+    if (c.globalUpKbps    > MAX_SPEED_KBPS) c.globalUpKbps    = MAX_SPEED_KBPS;
+    if (c.defaultDownKbps > MAX_SPEED_KBPS) c.defaultDownKbps = MAX_SPEED_KBPS;
+    if (c.defaultUpKbps   > MAX_SPEED_KBPS) c.defaultUpKbps   = MAX_SPEED_KBPS;
+    portENTER_CRITICAL(&mux);
+    speed = c;
+    gDl.init = false;
+    gUl.init = false;
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) { devices[i].dl.init = false; devices[i].ul.init = false; }
+    portEXIT_CRITICAL(&mux);
+
+    Preferences p;
+    p.begin(NS_SPEED, false);
+    p.putULong("g_dn", c.globalDownKbps);
+    p.putULong("g_up", c.globalUpKbps);
+    p.putULong("d_dn", c.defaultDownKbps);
+    p.putULong("d_up", c.defaultUpKbps);
+    p.end();
+}
+
 void quota_resetDaily() {
     portENTER_CRITICAL(&mux);
     for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
         devices[i].bytesToday    = 0;
         devices[i].blocked       = false;
         devices[i].quotaOverride = false;
+        memset(appBytes[i], 0, sizeof(appBytes[i]));
     }
-    dirty = true;
-    saveRequested = true;
+    useDirty = true;
+    useSaveNow = true;
+    cfgDirty = true;
     portEXIT_CRITICAL(&mux);
     Serial.println("[QUOTA] daily counters reset");
 }

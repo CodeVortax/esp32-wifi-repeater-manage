@@ -11,13 +11,14 @@
 ./build.sh            # compile only
 ./build.sh merge      # firmware + web UI -> dist/esp32dev-merged.bin
 ./build.sh bin        # merge, then copy to your phone's Downloads (Termux)
+./build.sh ota        # copy ota-firmware.bin and ota-ui.bin to Downloads (Termux)
 ./build.sh upload     # flash the firmware over USB
 ./build.sh uploadfs   # upload the web UI (data/) over USB
 ./build.sh monitor    # serial monitor
 ./build.sh clean
 ```
 
-`./build.sh merge` runs `pio run -t webflash`. It builds the firmware and the SPIFFS image, then merges bootloader, partition table, app and web UI into **one file** that you flash at `0x0`. A `.sha256` file is written next to it. Offsets and flash size come from the board and `min_spiffs.csv`, so there is nothing to edit when you change the partition table.
+`./build.sh merge` runs `pio run -t webflash`. It builds the firmware and the SPIFFS image, then merges bootloader, partition table, app and web UI into **one file** that you flash at `0x0`. A `.sha256` file is written next to it. Offsets and flash size come from the board and `partitions.csv`, so there is nothing to edit when you change the partition table.
 
 ## Pinned versions
 

@@ -8,6 +8,8 @@
 #include "diagnostics.h"
 #include "web_server.h"
 #include "telegram_bot.h"
+#include "apps.h"
+#include "ota.h"
 
 // Hold BOOT (GPIO0) for FACTORY_RESET_HOLD_MS to wipe the saved network/login
 // settings. This is the way back in if you forget the dashboard password.
@@ -31,6 +33,8 @@ void setup() {
     delay(300);
     Serial.printf("\n[BOOT] ESP32 WiFi Repeater %s\n", FW_VERSION);
 
+    ota_init();                          // restores the previous firmware if a fresh update keeps crashing
+
     pinMode(FACTORY_RESET_PIN, INPUT_PULLUP);
 
     settings_init();
@@ -39,6 +43,7 @@ void setup() {
     configTzTime(TZ_INFO, NTP_SERVER);   // time zone + DST aware, so the daily reset fires at local midnight
 
     quota_init();                        // needs the AP netif, so after wifiRepeater_init()
+    apps_loadCustom();                   // rules you taught it from the dashboard
     dnsMonitor_init();                   // background task
     diagnostics_init();
     webServer_init();
@@ -50,6 +55,7 @@ void setup() {
 void loop() {
     quota_loop();
     webServer_loop();
+    ota_loop();
     checkFactoryReset();
     delay(20);
 }

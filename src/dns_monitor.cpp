@@ -1,6 +1,8 @@
 #include "dns_monitor.h"
 #include "config.h"
 #include "wifi_repeater.h"
+#include "apps.h"
+#include "dns_parse.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
@@ -11,32 +13,64 @@ static int           logHead  = 0;      // next slot to write
 static int           logCount = 0;
 static portMUX_TYPE  logMux   = portMUX_INITIALIZER_UNLOCKED;
 
-// Minimal DNS QNAME parser: pulls the queried hostname out of a raw DNS query.
-static bool parseQName(const uint8_t *buf, int len, char *out, int outSize) {
-    if (len < 13) return false;
-    int pos = 12;                       // skip the header
-    int o = 0;
-    while (pos < len && buf[pos] != 0) {
-        int labelLen = buf[pos++];
-        if ((labelLen & 0xC0) != 0) break;              // compression pointer: not valid in a query
-        if (pos + labelLen > len) break;
-        if (o + labelLen + 2 >= outSize) break;
-        if (o > 0) out[o++] = '.';
-        for (int i = 0; i < labelLen; i++) {            // keep the log (and the web UI) printable
-            uint8_t c = buf[pos + i];
-            out[o++] = (c >= 0x21 && c < 0x7F) ? (char)c : '?';
-        }
-        pos += labelLen;
-    }
-    out[o] = '\0';
-    return o > 0;
+// ---- names nobody claimed ----------------------------------------------------
+
+static UnknownDomain unknownTab[UNKNOWN_DOMAIN_MAX];
+static int           unknownN = 0;
+
+static bool ignorable(const char *d) {
+    size_t n = strlen(d);
+    auto ends = [&](const char *suf) { size_t l = strlen(suf); return n >= l && strcmp(d + n - l, suf) == 0; };
+    return ends(".arpa") || ends(".local") || ends(".lan") || ends(".home") || ends(".localdomain") || strchr(d, '.') == nullptr;
 }
 
-static void logQuery(IPAddress ip, const char *domain) {
+static void noteUnknown(IPAddress ip, const char *domain) {
+    if (ignorable(domain)) return;
+    portENTER_CRITICAL(&logMux);
+    int idx = -1;
+    for (int i = 0; i < unknownN; i++)
+        if (strncmp(unknownTab[i].domain, domain, sizeof(unknownTab[i].domain) - 1) == 0) { idx = i; break; }
+    if (idx < 0) {
+        if (unknownN < UNKNOWN_DOMAIN_MAX) idx = unknownN++;
+        else {                                            // full: replace the least asked one
+            idx = 0;
+            for (int i = 1; i < unknownN; i++) if (unknownTab[i].count < unknownTab[idx].count) idx = i;
+        }
+        memset(&unknownTab[idx], 0, sizeof(UnknownDomain));
+        strncpy(unknownTab[idx].domain, domain, sizeof(unknownTab[idx].domain) - 1);
+    }
+    unknownTab[idx].count++;
+    unknownTab[idx].clientIp = (uint32_t)ip;
+    portEXIT_CRITICAL(&logMux);
+}
+
+int dnsMonitor_unknownSnapshot(UnknownDomain *out, int maxCount) {
+    int n;
+    portENTER_CRITICAL(&logMux);
+    n = unknownN < maxCount ? unknownN : maxCount;
+    memcpy(out, unknownTab, n * sizeof(UnknownDomain));
+    portEXIT_CRITICAL(&logMux);
+    for (int i = 1; i < n; i++) {                         // insertion sort, most asked first (n <= 40)
+        UnknownDomain k = out[i];
+        int j = i - 1;
+        while (j >= 0 && out[j].count < k.count) { out[j + 1] = out[j]; j--; }
+        out[j + 1] = k;
+    }
+    return n;
+}
+
+void dnsMonitor_unknownClear() {
+    portENTER_CRITICAL(&logMux);
+    unknownN = 0;
+    portEXIT_CRITICAL(&logMux);
+}
+
+static void logQuery(IPAddress ip, const char *domain, uint8_t app) {
     portENTER_CRITICAL(&logMux);
     DnsLogEntry &e = logRing[logHead];
     e.clientIp  = ip;
     e.timestamp = millis();
+    e.app       = app;
     strncpy(e.domain, domain, sizeof(e.domain) - 1);
     e.domain[sizeof(e.domain) - 1] = '\0';
     logHead = (logHead + 1) % DNS_LOG_SIZE;
@@ -86,7 +120,13 @@ static void dnsTask(void *) {
         if (len < 12) continue;
 
         char domain[96];
-        if (parseQName(query, len, domain, sizeof(domain))) logQuery(clientIp, domain);
+        uint8_t qApp = APP_OTHER;
+        if (dns_parseQName(query, len, domain, sizeof(domain))) {
+            qApp = apps_classifyDomain(domain);
+            logQuery(clientIp, domain, qApp);
+        } else {
+            domain[0] = '\0';
+        }
 
         if (!wifiRepeater_isUpstreamConnected()) continue;   // nothing to forward to
 
@@ -111,6 +151,13 @@ static void dnsTask(void *) {
         upstream.stop();
 
         if (respLen > 0) {
+            // Remember which app these addresses belong to, so the bytes that follow can be counted for it.
+            DnsLearn learn;
+            if (dns_learnFromReply(reply, respLen, qApp, learn)) {
+                uint16_t nowMin = (uint16_t)(millis() / 60000UL);
+                for (int k = 0; k < learn.nIps; k++) apps_cachePut(learn.ips[k], learn.app, nowMin);
+                if (learn.app == APP_OTHER && domain[0] && learn.nIps > 0) noteUnknown(clientIp, domain);
+            }
             server.beginPacket(clientIp, clientPort);
             server.write(reply, respLen);
             server.endPacket();
@@ -120,5 +167,6 @@ static void dnsTask(void *) {
 
 void dnsMonitor_init() {
     memset(logRing, 0, sizeof(logRing));
-    xTaskCreate(dnsTask, "dns", 6144, nullptr, 1, nullptr);
+    memset(unknownTab, 0, sizeof(unknownTab));
+    xTaskCreate(dnsTask, "dns", 8192, nullptr, 1, nullptr);
 }

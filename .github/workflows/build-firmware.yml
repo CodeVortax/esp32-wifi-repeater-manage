@@ -2,7 +2,7 @@ name: Build Firmware
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "feature/**" ]
     tags: [ "v*" ]
   pull_request:
   workflow_dispatch:
@@ -17,6 +17,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Host tests (app matching, DNS parsing, speed limiter)
+        run: |
+          make -C test CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -I../src"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -46,11 +50,21 @@ jobs:
             exit 1
           fi
 
-      - name: Name the artifact
+      - name: Check the images fit their partitions
+        run: |
+          APP=$(stat -c%s dist/ota-firmware.bin); UI=$(stat -c%s dist/ota-ui.bin)
+          echo "ota-firmware.bin: $APP bytes (max $((0x1C0000)))"
+          echo "ota-ui.bin: $UI bytes (max $((0x50000)))"
+          [ "$APP" -le $((0x1C0000)) ] || { echo "::error::firmware does not fit the app partition"; exit 1; }
+          [ "$UI" -le $((0x50000)) ] || { echo "::error::dashboard files do not fit the spiffs partition"; exit 1; }
+
+      - name: Name the artifacts
         run: |
           NAME="esp32-wifi-repeater-${GITHUB_REF_NAME//\//-}"
-          cp dist/esp32dev-merged.bin "$NAME.bin"
-          cp dist/esp32dev-merged.bin.sha256 "$NAME.bin.sha256"
+          cp dist/esp32dev-merged.bin "$NAME.bin"              # first flash over USB, at offset 0x0
+          cp dist/ota-firmware.bin "$NAME-ota-firmware.bin"    # Update over WiFi: firmware
+          cp dist/ota-ui.bin "$NAME-ota-ui.bin"                # Update over WiFi: dashboard files
+          for f in "$NAME.bin" "$NAME-ota-firmware.bin" "$NAME-ota-ui.bin"; do sha256sum "$f" > "$f.sha256"; done
           echo "ARTIFACT=$NAME" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
@@ -58,14 +72,14 @@ jobs:
         with:
           name: firmware
           path: |
-            ${{ env.ARTIFACT }}.bin
-            ${{ env.ARTIFACT }}.bin.sha256
+            ${{ env.ARTIFACT }}*.bin
+            ${{ env.ARTIFACT }}*.bin.sha256
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ env.ARTIFACT }}.bin
-            ${{ env.ARTIFACT }}.bin.sha256
+            ${{ env.ARTIFACT }}*.bin
+            ${{ env.ARTIFACT }}*.bin.sha256
           generate_release_notes: true

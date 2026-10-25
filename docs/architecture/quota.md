@@ -41,3 +41,12 @@ It may reconnect, but it stays blocked and gets no traffic. A limit of `0` means
 ## Midnight
 
 `TZ_INFO` in `include/config.h` is a POSIX time-zone string. The default is Egypt (`EET-2EEST,M4.5.5/0,M10.5.4/24`). The day of the last reset is saved, so a reboot that spans midnight still resets. The reset waits until NTP has set the clock.
+
+## Apps, users and speed (0.3.0)
+
+- **Users.** The device table is keyed by MAC. Each device gets a number in order of first appearance and an optional name (32 bytes) stored on the repeater.
+- **App recognition** (`src/apps.cpp`, `src/dns_parse.cpp`). The repeater is each client's DNS server. A looked-up name is matched against a suffix table (longest suffix wins), CNAME targets too, and the A records of the answer are remembered (IP to app, 6 h). Counted frames look up their remote IP. Telegram's fixed address ranges are matched directly. Anything else is "Other". Custom rules win over the table.
+- **Limits of that idea.** DNS over HTTPS / Private DNS and VPNs hide the names; shared CDN addresses can be attributed to the wrong app for a moment (generic Google addresses never overwrite a specific app).
+- **Speed limits** (`src/shaper.h`). Token buckets per direction: network-wide, then per user (own cap or the default). Packets over the rate are dropped, so TCP backs off. Whitelisted devices and traffic to the repeater itself are exempt.
+- **Saving.** Dirty counters are written once a minute as one CRC-checked blob; the old blob stays valid if power fails mid-write. At most 1440 writes a day, far below the flash's endurance.
+- **Tests.** `make -C test` runs the pure C++ parts on a PC with sanitizers (also in CI).

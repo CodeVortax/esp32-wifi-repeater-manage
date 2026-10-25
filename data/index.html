@@ -6,455 +6,610 @@
 <meta name="color-scheme" content="dark light">
 <title>ESP32 Repeater</title>
 <style>
-  :root {
-    --bg:#0f1218; --surface:#171b23; --surface2:#1f2430; --line:#2a3040;
-    --text:#e8eaf0; --muted:#98a1b3;
-    --blue:#4285f4; --green:#34a853; --red:#ea4335; --amber:#fbbc04;
-    --radius:16px;
-  }
-  @media (prefers-color-scheme: light) {
-    :root { --bg:#f4f6fb; --surface:#ffffff; --surface2:#eef1f8; --line:#dde2ee; --text:#1b1f2a; --muted:#5d6678; }
-  }
-  * { box-sizing:border-box; }
-  html { -webkit-text-size-adjust:100%; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Arabic",sans-serif; }
-  .wrap { max-width:1040px; margin:0 auto; padding:16px 16px 48px; }
-  h1 { font-size:1.25rem; margin:0; font-weight:650; }
-  h2 { font-size:1rem; margin:0 0 12px; font-weight:650; }
-  button, input { font:inherit; color:inherit; }
-
-  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
-  header .grow { flex:1; min-width:0; }
-  .sub { color:var(--muted); font-size:.8rem; }
-  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
-          background:var(--surface); border:1px solid var(--line); font-size:.8rem; }
-  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
-  .dot.ok { background:var(--green); box-shadow:0 0 0 3px color-mix(in srgb, var(--green) 25%, transparent); }
-  .dot.bad { background:var(--red); }
-
-  .btn { background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:7px 12px;
-         cursor:pointer; font-size:.82rem; }
-  .btn:hover { border-color:var(--blue); }
-  .btn:focus-visible, input:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
-  .btn.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
-  .btn.danger  { color:var(--red); }
-  .btn.ok      { color:var(--green); }
-  .btn:disabled { opacity:.55; cursor:default; }
-
-  .banner { background:color-mix(in srgb, var(--amber) 16%, var(--surface)); border:1px solid var(--amber);
-            border-radius:12px; padding:10px 14px; margin-bottom:16px; font-size:.88rem; }
-
-  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:20px; }
-  .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px; }
-  .stat .label { color:var(--muted); font-size:.78rem; }
-  .stat .value { font-size:1.5rem; font-weight:650; margin-top:2px; overflow-wrap:anywhere; }
-  .stat .hint  { color:var(--muted); font-size:.78rem; margin-top:2px; overflow-wrap:anywhere; }
-
-  section { margin-top:22px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:12px; }
-  .empty { color:var(--muted); text-align:center; padding:28px 12px; }
-
-  .dev-head { display:flex; align-items:center; gap:8px; }
-  .dev-name { font-weight:650; overflow-wrap:anywhere; background:none; border:0; padding:0; cursor:pointer; text-align:start; }
-  .dev-mac  { color:var(--muted); font-size:.75rem; font-variant-numeric:tabular-nums; direction:ltr; text-align:start; }
-  .tags { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 0; min-height:22px; }
-  .tag { font-size:.7rem; padding:2px 8px; border-radius:999px; }
-  .tag.blocked { background:color-mix(in srgb, var(--red) 20%, transparent); color:var(--red); }
-  .tag.wl      { background:color-mix(in srgb, var(--green) 20%, transparent); color:var(--green); }
-  .tag.off     { background:var(--surface2); color:var(--muted); }
-
-  .bar { height:10px; background:var(--surface2); border-radius:999px; overflow:hidden; margin:12px 0 6px; }
-  .bar > i { display:block; height:100%; background:var(--blue); border-radius:999px; transition:width .4s; }
-  .bar > i.warn { background:var(--amber); }
-  .bar > i.full { background:var(--red); }
-  .bar > i.free { background:var(--green); }
-  .usage { display:flex; justify-content:space-between; font-size:.8rem; color:var(--muted); }
-  .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
-
-  .log { max-height:260px; overflow:auto; font-size:.82rem; direction:ltr; text-align:start; }
-  .log div { display:flex; gap:10px; padding:5px 0; border-bottom:1px solid var(--line); }
-  .log div:last-child { border:0; }
-  .log .ip { color:var(--muted); min-width:104px; font-variant-numeric:tabular-nums; }
-  .log .age { color:var(--muted); margin-inline-start:auto; white-space:nowrap; }
-
-  .row { display:flex; gap:8px; flex-wrap:wrap; }
-  input { background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:9px 11px; width:100%; }
-  .row input { flex:1; min-width:140px; width:auto; }
-  .result { margin-top:10px; font-size:.88rem; min-height:1.3em; }
-
-  .form { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-bottom:14px; }
-  label.f { display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted); }
-
-  dialog { background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:var(--radius);
-           padding:18px; width:min(92vw,360px); }
-  dialog::backdrop { background:rgba(0,0,0,.55); }
-  dialog form { display:grid; gap:12px; }
-  dialog .row { justify-content:flex-end; }
-
-  #toast { position:fixed; inset-inline:0; bottom:18px; display:flex; justify-content:center; pointer-events:none; }
-  #toast span { background:var(--text); color:var(--bg); padding:9px 16px; border-radius:999px; font-size:.85rem;
-                opacity:0; transform:translateY(8px); transition:.2s; }
-  #toast span.show { opacity:1; transform:none; }
-
-  footer { margin-top:28px; text-align:center; color:var(--muted); font-size:.75rem; }
-  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+:root{--bg:#0b0f16;--surface:#141a24;--surface2:#1c2432;--line:#283142;--text:#e8ecf4;--muted:#97a2b6;--blue:#4c8dff;--red:#ff6b6b;--green:#3ecf8e;--amber:#f5b94a;
+ --c0:#ff5a5f;--c1:#4c8dff;--c2:#3ecf8e;--c3:#f5b94a;--c4:#b57bff;--c5:#ff9f43;--c6:#29c5d6;--c7:#7b8799}
+@media(prefers-color-scheme:light){:root{--bg:#eef2f9;--surface:#fff;--surface2:#f1f4fa;--line:#d9e0ee;--text:#18202e;--muted:#5b6679;--blue:#2f6fe4;--red:#d93d3d;--green:#1b9c66;--amber:#b57a0a;
+ --c0:#e5383b;--c1:#2f6fe4;--c2:#1b9c66;--c3:#c98a0a;--c4:#8f4fe0;--c5:#e07a1f;--c6:#0f95a6;--c7:#6b7587}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Arabic",sans-serif}
+button,input,select{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.app{display:flex;min-height:100vh;min-height:100dvh}
+nav.side{width:224px;flex:none;background:var(--surface);border-inline-end:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;height:100dvh}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;font-weight:650}
+.brand i{width:34px;height:34px;border-radius:10px;background:var(--blue);display:grid;place-items:center}
+.brand svg{width:20px;height:20px;stroke:#fff;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.nav{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;border:0;background:none;color:var(--muted);cursor:pointer;text-align:start;width:100%}
+.nav svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.nav:hover{background:var(--surface2)}
+.nav[aria-current=page]{background:var(--surface2);color:var(--text)}
+.nav[aria-current=page] svg{stroke:var(--blue)}
+.grow{flex:1}
+main{flex:1;min-width:0;padding:22px 24px 40px;max-width:1100px}
+header.top{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+header.top h1{font-size:1.35rem;margin:0;flex:1;font-weight:650}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:4px 11px;font-size:.78rem;background:var(--surface2);border:1px solid var(--line);color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.on{background:var(--green)}.dot.off{background:var(--red)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+.card h2{font-size:.95rem;margin:0 0 12px;font-weight:650}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:14px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:13px 14px}
+.stat b{display:block;font-size:1.35rem;font-variant-numeric:tabular-nums;margin-top:2px}
+.stat span{color:var(--muted);font-size:.78rem}
+.muted{color:var(--muted)}.small{font-size:.8rem}
+.row{display:flex;align-items:center;gap:10px}
+.between{justify-content:space-between}
+.wrap{flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--surface2);border-radius:10px;padding:8px 14px;cursor:pointer}
+.btn:hover{border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+.btn.danger{color:var(--red)}
+.btn:disabled{opacity:.55;cursor:default}
+.btn.sm{padding:5px 10px;font-size:.82rem}
+input,select{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;width:100%;min-width:0}
+label.f{display:block;margin:12px 0 5px;font-size:.78rem;color:var(--muted)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.user{display:flex;flex-direction:column;gap:11px}
+.avatar{width:40px;height:40px;border-radius:50%;background:var(--surface2);border:1px solid var(--line);display:grid;place-items:center;font-weight:650;flex:none}
+.name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{display:flex;height:9px;border-radius:99px;overflow:hidden;background:var(--surface2)}
+.bar i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.78rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend em{width:9px;height:9px;border-radius:3px;display:inline-block}
+.tag{display:inline-block;border-radius:6px;padding:1px 7px;font-size:.72rem;background:var(--surface2);border:1px solid var(--line);color:var(--muted)}
+.tag.red{color:var(--red);border-color:var(--red)}.tag.green{color:var(--green);border-color:var(--green)}.tag.amber{color:var(--amber);border-color:var(--amber)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+td,th{padding:8px 6px;text-align:start;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--muted);font-weight:500;font-size:.78rem}
+tr:last-child td{border-bottom:0}
+td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
+.dom{overflow-wrap:anywhere;direction:ltr;unicode-bidi:plaintext}
+.hbar{height:6px;border-radius:99px;background:var(--surface2);overflow:hidden;min-width:60px}
+.hbar i{display:block;height:100%;background:var(--blue)}
+.empty{color:var(--muted);text-align:center;padding:22px 8px}
+.banner{background:color-mix(in srgb,var(--amber) 14%,var(--surface));border:1px solid var(--amber);border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.88rem}
+.note{font-size:.8rem;color:var(--muted);margin-top:10px}
+dialog{border:1px solid var(--line);border-radius:18px;background:var(--surface);color:var(--text);padding:20px;width:min(440px,calc(100vw - 28px))}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+dialog h3{margin:0 0 4px;font-size:1.05rem}
+.msg{min-height:1.3em;font-size:.84rem;margin-top:10px}
+.msg.err{color:var(--red)}.msg.ok{color:var(--green)}
+progress{width:100%;height:8px;accent-color:var(--blue)}
+#toast{position:fixed;bottom:84px;inset-inline:0;margin:auto;width:max-content;max-width:calc(100vw - 32px);background:var(--text);color:var(--bg);border-radius:12px;padding:9px 16px;font-size:.88rem;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50}
+#toast.show{opacity:1}
+[dir=rtl] .stat b,[dir=rtl] .card.user b,[dir=rtl] .tag,[dir=rtl] td.n{direction:ltr;unicode-bidi:isolate}
+nav.bottom{display:none}
+@media(max-width:760px){
+ nav.side{display:none}
+ main{padding:16px 14px 96px}
+ nav.bottom{display:flex;position:fixed;inset-inline:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom));z-index:20}
+ nav.bottom .nav{flex-direction:column;gap:2px;padding:7px 2px;font-size:.66rem;justify-content:center;text-align:center;border-radius:10px}
+ .two{grid-template-columns:1fr}
+ .grid{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-
-  <header>
-    <div class="grow">
-      <h1 data-i18n="title">ESP32 WiFi Repeater</h1>
-      <div class="sub" id="subtitle"></div>
-    </div>
-    <span class="pill" id="linkPill"><i class="dot" id="linkDot"></i><span id="linkText"></span></span>
-    <button class="btn" id="langBtn" type="button" aria-label="Language">العربية</button>
-  </header>
-
-  <div class="banner" id="pwBanner" hidden data-i18n="defaultPw"></div>
-
-  <div class="stats">
-    <div class="card stat"><div class="label" data-i18n="devicesOnline">Devices online</div><div class="value" id="sOnline">-</div><div class="hint" id="sOnlineHint"></div></div>
-    <div class="card stat"><div class="label" data-i18n="usedToday">Used today</div><div class="value" id="sTotal">-</div><div class="hint" data-i18n="allDevices">all devices</div></div>
-    <div class="card stat"><div class="label" data-i18n="upstream">Upstream WiFi</div><div class="value" id="sUp">-</div><div class="hint" id="sUpHint"></div></div>
-    <div class="card stat"><div class="label" data-i18n="system">System</div><div class="value" id="sUptime">-</div><div class="hint" id="sHeap"></div></div>
-  </div>
-
-  <section>
-    <h2 data-i18n="devices">Devices</h2>
-    <div id="devices" class="grid"></div>
-  </section>
-
-  <section class="card">
-    <h2 data-i18n="domains">Domains (live)</h2>
-    <div id="dnsLog" class="log"></div>
-  </section>
-
-  <section class="card">
-    <h2 data-i18n="ping">Ping</h2>
-    <div class="row">
-      <input id="pingHost" value="8.8.8.8" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="8.8.8.8 / example.com">
-      <button class="btn primary" id="pingBtn" type="button" data-i18n="run">Run</button>
-    </div>
-    <div class="result" id="pingResult" aria-live="polite"></div>
-  </section>
-
-  <section class="card">
-    <h2 data-i18n="settings">Settings</h2>
-    <p class="sub" data-i18n="settingsHint" style="margin-top:-6px"></p>
-    <div class="form">
-      <label class="f"><span data-i18n="staSsid">Home WiFi name (upstream)</span><input id="staSsid" maxlength="32" autocomplete="off"></label>
-      <label class="f"><span data-i18n="staPass">Home WiFi password</span><input id="staPass" type="password" maxlength="63" autocomplete="new-password"></label>
-      <label class="f"><span data-i18n="apSsid">Repeater name</span><input id="apSsid" maxlength="32" autocomplete="off"></label>
-      <label class="f"><span data-i18n="apPass">Repeater password</span><input id="apPass" type="password" maxlength="63" autocomplete="new-password"></label>
-      <label class="f"><span data-i18n="adminPass">Dashboard password</span><input id="adminPass" type="password" maxlength="64" autocomplete="new-password"></label>
-      <label class="f"><span data-i18n="tgToken">Telegram bot token</span><input id="tgToken" autocomplete="off"></label>
-      <label class="f"><span data-i18n="tgChat">Telegram chat ID</span><input id="tgChat" inputmode="numeric" autocomplete="off"></label>
-    </div>
-    <button class="btn primary" id="saveBtn" type="button" data-i18n="saveReboot">Save &amp; reboot</button>
-    <div class="result" id="settingsStatus" aria-live="polite"></div>
-  </section>
-
-  <footer id="footer"></footer>
+<div class="app">
+  <nav class="side" id="side" aria-label="Main"></nav>
+  <main>
+    <header class="top"><h1 id="title"></h1><span class="pill" id="conn"></span></header>
+    <div id="banner"></div>
+    <div id="page"></div>
+  </main>
 </div>
+<nav class="bottom" id="bottom" aria-label="Main"></nav>
+<div id="toast" role="status" aria-live="polite"></div>
 
-<dialog id="limitDlg">
-  <form method="dialog" id="limitForm">
-    <h2 id="limitTitle"></h2>
-    <label class="f"><span data-i18n="limitLabel">Daily limit in MB (0 = unlimited)</span>
-      <input id="limitInput" type="number" min="0" max="10000000" step="1" inputmode="numeric" required></label>
-    <div class="row">
-      <button class="btn" value="cancel" type="button" id="limitCancel" data-i18n="cancel">Cancel</button>
-      <button class="btn primary" value="ok" data-i18n="save">Save</button>
+<dialog id="dlg">
+  <form method="dialog" id="dlgForm" style="margin:0">
+    <h3 id="dlgTitle"></h3>
+    <div class="muted small" id="dlgSub"></div>
+    <label class="f" for="dName" data-t="name"></label>
+    <input id="dName" maxlength="32" autocomplete="off">
+    <label class="f" for="dLimit" data-t="dailyLimit"></label>
+    <input id="dLimit" type="number" min="0" max="10000000" inputmode="numeric" placeholder="0">
+    <div class="two">
+      <div><label class="f" for="dDown" data-t="downMbps"></label><input id="dDown" type="number" min="0" step="0.1" inputmode="decimal"></div>
+      <div><label class="f" for="dUp" data-t="upMbps"></label><input id="dUp" type="number" min="0" step="0.1" inputmode="decimal"></div>
+    </div>
+    <div class="note" data-t="speedBlankHint"></div>
+    <label class="row" style="margin-top:14px"><input type="checkbox" id="dWhite" style="width:auto"><span data-t="whitelist"></span></label>
+    <div class="msg" id="dMsg"></div>
+    <div class="row between wrap" style="margin-top:6px">
+      <button type="button" class="btn" id="dBlock"></button>
+      <span class="row"><button type="button" class="btn" id="dCancel" data-t="cancel"></button><button type="button" class="btn primary" id="dSave" data-t="save"></button></span>
     </div>
   </form>
 </dialog>
-
-<dialog id="nameDlg">
-  <form method="dialog" id="nameForm">
-    <h2 data-i18n="rename">Device name</h2>
-    <label class="f"><span data-i18n="nameHint">Only stored in this browser</span>
-      <input id="nameInput" maxlength="32" autocomplete="off"></label>
-    <div class="row">
-      <button class="btn" type="button" id="nameCancel" data-i18n="cancel">Cancel</button>
-      <button class="btn primary" value="ok" data-i18n="save">Save</button>
-    </div>
-  </form>
-</dialog>
-
-<div id="toast" role="status" aria-live="polite"><span></span></div>
 
 <script>
 'use strict';
-// ---------------------------------------------------------------- i18n ----
+/* ---------- text ---------- */
 const I18N = {
-  en: {
-    title:'ESP32 WiFi Repeater', devicesOnline:'Devices online', usedToday:'Used today', allDevices:'all devices',
-    upstream:'Upstream WiFi', system:'System', devices:'Devices', domains:'Domains (live)', ping:'Ping', run:'Run',
-    settings:'Settings', settingsHint:'Leave a field empty to keep its current value. Saving a change reboots the repeater.',
-    staSsid:'Home WiFi name (upstream)', staPass:'Home WiFi password', apSsid:'Repeater name', apPass:'Repeater password',
-    adminPass:'Dashboard password', tgToken:'Telegram bot token', tgChat:'Telegram chat ID', saveReboot:'Save & reboot',
-    cancel:'Cancel', save:'Save', limitLabel:'Daily limit in MB (0 = unlimited)', rename:'Device name', nameHint:'Only stored in this browser',
-    defaultPw:'You are still using the default dashboard password. Anyone on the repeater can change your settings. Set a new one in Settings.',
-    connected:'Connected', offline:'Offline', connecting:'Connecting...', live:'Live', noDevices:'No devices yet. Connect a phone to the repeater and it will show up here.',
-    noDns:'No lookups yet.', block:'Block', unblock:'Unblock', whitelist:'Whitelist', unwhitelist:'Remove whitelist', setLimit:'Set limit',
-    blocked:'Blocked', whitelisted:'Whitelist', online:'Online', offlineTag:'Offline', unlimited:'Unlimited', today:'today', of:'of',
-    ok:'Done', failed:'Failed', pinging:'Pinging...', pingRes:(r)=>`${r.received}/${r.sent} replies, ${r.lossPct}% loss, avg ${r.avgMs} ms`,
-    saving:'Saving...', rebooting:'Rebooting... reconnecting in a few seconds', uptime:'up', free:'free', ago:'ago', counting:'Traffic counting is OFF',
-    tracked:'tracked', telegramOn:'Telegram on', telegramOff:'Telegram off', ch:'channel', unreachable:'Lost contact with the repeater',
-  },
-  ar: {
-    title:'ريبيتر ESP32', devicesOnline:'أجهزة متصلة', usedToday:'المستخدم اليوم', allDevices:'كل الأجهزة',
-    upstream:'الشبكة الأساسية', system:'النظام', devices:'الأجهزة', domains:'النطاقات (مباشر)', ping:'اختبار Ping', run:'تشغيل',
-    settings:'الإعدادات', settingsHint:'اترك أي حقل فارغًا ليبقى كما هو. حفظ أي تغيير يعيد تشغيل الريبيتر.',
-    staSsid:'اسم شبكة البيت (الأساسية)', staPass:'باسورد شبكة البيت', apSsid:'اسم الريبيتر', apPass:'باسورد الريبيتر',
-    adminPass:'باسورد لوحة التحكم', tgToken:'توكن بوت تليجرام', tgChat:'معرّف محادثة تليجرام', saveReboot:'حفظ وإعادة تشغيل',
-    cancel:'إلغاء', save:'حفظ', limitLabel:'الحد اليومي بالميجابايت (0 = بلا حد)', rename:'اسم الجهاز', nameHint:'يُحفظ في هذا المتصفح فقط',
-    defaultPw:'ما زلت تستخدم باسورد لوحة التحكم الافتراضي. أي شخص على الريبيتر يقدر يغيّر إعداداتك. اختر باسورد جديد من الإعدادات.',
-    connected:'متصل', offline:'غير متصل', connecting:'جارٍ الاتصال...', live:'مباشر', noDevices:'لا توجد أجهزة بعد. اربط هاتفًا بالريبيتر وسيظهر هنا.',
-    noDns:'لا توجد استعلامات بعد.', block:'حظر', unblock:'إلغاء الحظر', whitelist:'قائمة بيضاء', unwhitelist:'إزالة من البيضاء', setLimit:'تحديد الحد',
-    blocked:'محظور', whitelisted:'قائمة بيضاء', online:'متصل', offlineTag:'غير متصل', unlimited:'بلا حد', today:'اليوم', of:'من',
-    ok:'تم', failed:'فشل', pinging:'جارٍ الاختبار...', pingRes:(r)=>`${r.received}/${r.sent} ردود، فقد ${r.lossPct}%، متوسط ${r.avgMs} م.ث`,
-    saving:'جارٍ الحفظ...', rebooting:'جارٍ إعادة التشغيل... سيعاد الاتصال خلال ثوانٍ', uptime:'يعمل منذ', free:'متاح', ago:'منذ', counting:'عدّ الاستهلاك متوقف',
-    tracked:'مسجّل', telegramOn:'تليجرام يعمل', telegramOff:'تليجرام متوقف', ch:'قناة', unreachable:'انقطع الاتصال بالريبيتر',
-  }
+ en:{overview:'Overview',users:'Users',apps:'Apps',speed:'Speed',settings:'Settings',system:'System',
+  connected:'Live',offline:'Reconnecting...',
+  online:'online',offlineU:'offline',noUsers:'No devices have connected yet.',
+  today:'Today',allTime:'All time',devices:'Devices',usedToday:'Used today',upstream:'Internet',up:'Up',down:'Down',
+  internet:'Internet',repeater:'Repeater',homeWifi:'Home WiFi',signal:'Signal',channel:'Channel',
+  topApps:'Top apps today',noApps:'No app traffic recorded yet.',
+  rename:'Edit',name:'Name',save:'Save',cancel:'Cancel',block:'Block',unblock:'Unblock',blocked:'Blocked',limited:'Limited',trusted:'Trusted',
+  dailyLimit:'Daily data limit (MB, 0 = none)',downMbps:'Download cap (Mbps)',upMbps:'Upload cap (Mbps)',
+  speedBlankHint:'Leave a speed box empty to use the default for everyone. 0 = unlimited.',whitelist:'Trusted device (never limited or blocked)',
+  saved:'Saved',failed:'Failed',
+  cat0:'Video',cat1:'Social',cat2:'Messaging',cat3:'Browsing',cat4:'Music',cat5:'Gaming',cat6:'Downloads',cat7:'Other',
+  usage:'Usage',thisDevice:'All users',user:'User',app:'App',traffic:'Traffic',byCategory:'By category',byApp:'By app',
+  liveDomains:'Live lookups',noDomains:'No lookups yet.',unknown:'Domains I do not know yet',unknownHint:'These names were not recognised. Pick an app and teach the repeater; it then counts them from now on.',
+  assign:'Assign',noUnknown:'Nothing to teach right now.',clear:'Clear list',rules:'Your rules',noRules:'No custom rules yet.',addRule:'Add a rule',domainSuffix:'Domain (e.g. example.com)',remove:'Remove',
+  appsNote:'Apps are recognised from the names each device looks up (DNS) and the addresses those names resolve to. Phones using Private DNS / DoH or a VPN hide their lookups; that traffic is counted under "Other".',
+  speedTitle:'Speed limits',globalCap:'Whole network',defaultCap:'Default per user',perUser:'Per user',editUser:'Edit',default:'default',unlimited:'unlimited',
+  speedNote:'Limits drop the excess packets, so TCP slows down to the cap. A few seconds are needed for a transfer to settle. Trusted devices are never limited.',
+  saveSpeed:'Save speed limits',
+  wifi:'WiFi',staSsid:'Home WiFi name',staPass:'Home WiFi password',apSsid:'Repeater name',apPass:'Repeater password',adminPass:'Dashboard password',tgToken:'Telegram bot token',tgChat:'Telegram chat ID',
+  keepBlank:'Leave blank to keep the current value.',saveReboot:'Save (reboots if changed)',language:'Language',
+  version:'Version',uptime:'Uptime',freeMem:'Free memory',ping:'Ping test',run:'Run',pingHost:'Host (blank = 8.8.8.8)',
+  update:'Update over WiFi',updFw:'Firmware (ota-firmware.bin)',updUi:'Dashboard files (ota-ui.bin)',upload:'Upload',
+  updNote:'Pick the file, upload, and the repeater restarts by itself. If the new firmware fails to start 3 times it returns to the previous one.',
+  uploading:'Uploading...',updDone:'Done. Restarting...',reboot:'Reboot',rebootAsk:'Reboot the repeater?',logout:'Sign out',
+  defPass:'You are still using the default dashboard password. Change it in Settings.',
+  noCount:'Traffic counting is not active, so usage and limits will not work.',
+  saveNote:'Usage is saved to flash once a minute (and before every restart).',
+  pickFile:'Choose a file first.',user_:'User'},
+ ar:{overview:'نظرة عامة',users:'المستخدمون',apps:'التطبيقات',speed:'السرعة',settings:'الإعدادات',system:'النظام',
+  connected:'مباشر',offline:'إعادة الاتصال...',
+  online:'متصل',offlineU:'غير متصل',noUsers:'لم يتصل أي جهاز بعد.',
+  today:'اليوم',allTime:'الإجمالي',devices:'الأجهزة',usedToday:'المستهلك اليوم',upstream:'الإنترنت',up:'رفع',down:'تنزيل',
+  internet:'الإنترنت',repeater:'الريبيتر',homeWifi:'واي فاي المنزل',signal:'الإشارة',channel:'القناة',
+  topApps:'أكثر التطبيقات اليوم',noApps:'لا توجد بيانات تطبيقات بعد.',
+  rename:'تعديل',name:'الاسم',save:'حفظ',cancel:'إلغاء',block:'حظر',unblock:'إلغاء الحظر',blocked:'محظور',limited:'محدود',trusted:'موثوق',
+  dailyLimit:'حد البيانات اليومي (ميغابايت، 0 = بلا حد)',downMbps:'سقف التنزيل (ميغابت/ث)',upMbps:'سقف الرفع (ميغابت/ث)',
+  speedBlankHint:'اترك خانة السرعة فارغة لاستخدام الافتراضي للجميع. 0 = بلا حد.',whitelist:'جهاز موثوق (لا يُحدّ ولا يُحظر)',
+  saved:'تم الحفظ',failed:'فشل',
+  cat0:'فيديو',cat1:'اجتماعي',cat2:'مراسلة',cat3:'تصفح',cat4:'موسيقى',cat5:'ألعاب',cat6:'تنزيلات',cat7:'أخرى',
+  usage:'الاستهلاك',thisDevice:'كل المستخدمين',user:'المستخدم',app:'التطبيق',traffic:'البيانات',byCategory:'حسب الفئة',byApp:'حسب التطبيق',
+  liveDomains:'الطلبات المباشرة',noDomains:'لا توجد طلبات بعد.',unknown:'نطاقات لا أعرفها بعد',unknownHint:'لم يتم التعرف على هذه الأسماء. اختر تطبيقًا لتعليم الريبيتر وسيحسبها من الآن.',
+  assign:'تعيين',noUnknown:'لا شيء لتعليمه الآن.',clear:'مسح القائمة',rules:'قواعدك',noRules:'لا توجد قواعد مخصصة.',addRule:'إضافة قاعدة',domainSuffix:'النطاق (مثل example.com)',remove:'حذف',
+  appsNote:'يتم التعرف على التطبيقات من الأسماء التي تطلبها الأجهزة (DNS) وعناوينها. الهواتف التي تستخدم DNS خاص / DoH أو VPN تخفي طلباتها، وتُحسب ضمن "أخرى".',
+  speedTitle:'حدود السرعة',globalCap:'الشبكة كاملة',defaultCap:'الافتراضي لكل مستخدم',perUser:'لكل مستخدم',editUser:'تعديل',default:'افتراضي',unlimited:'بلا حد',
+  speedNote:'الحد يُسقط الحزم الزائدة فيبطئ TCP إلى السقف. قد يلزم بضع ثوانٍ ليستقر النقل. الأجهزة الموثوقة لا تُحدّ.',
+  saveSpeed:'حفظ حدود السرعة',
+  wifi:'الواي فاي',staSsid:'اسم واي فاي المنزل',staPass:'كلمة مرور واي فاي المنزل',apSsid:'اسم الريبيتر',apPass:'كلمة مرور الريبيتر',adminPass:'كلمة مرور اللوحة',tgToken:'توكن بوت تيليجرام',tgChat:'معرّف محادثة تيليجرام',
+  keepBlank:'اتركه فارغًا للإبقاء على القيمة الحالية.',saveReboot:'حفظ (يعيد التشغيل عند التغيير)',language:'اللغة',
+  version:'الإصدار',uptime:'مدة التشغيل',freeMem:'الذاكرة الحرة',ping:'اختبار Ping',run:'تشغيل',pingHost:'المضيف (فارغ = 8.8.8.8)',
+  update:'التحديث عبر الواي فاي',updFw:'البرنامج (ota-firmware.bin)',updUi:'ملفات اللوحة (ota-ui.bin)',upload:'رفع',
+  updNote:'اختر الملف وارفعه وسيعيد الريبيتر التشغيل تلقائيًا. إذا فشل البرنامج الجديد في الإقلاع 3 مرات يعود إلى السابق.',
+  uploading:'جارٍ الرفع...',updDone:'تم. جارٍ إعادة التشغيل...',reboot:'إعادة التشغيل',rebootAsk:'إعادة تشغيل الريبيتر؟',logout:'تسجيل الخروج',
+  defPass:'ما زلت تستخدم كلمة مرور اللوحة الافتراضية. غيّرها من الإعدادات.',
+  noCount:'عدّ البيانات غير مفعّل، لذلك لن يعمل الاستهلاك ولا الحدود.',
+  saveNote:'يُحفظ الاستهلاك في الذاكرة كل دقيقة (وقبل كل إعادة تشغيل).',
+  pickFile:'اختر ملفًا أولًا.',user_:'مستخدم'}
 };
-let lang = (navigator.language || '').toLowerCase().startsWith('ar') ? 'ar' : 'en';
-try { const saved = localStorage.getItem('lang'); if (saved === 'ar' || saved === 'en') lang = saved; } catch(e) {}
-const t = (k) => (I18N[lang][k] ?? I18N.en[k] ?? k);
+let lang=(navigator.language||'').toLowerCase().startsWith('ar')?'ar':'en';
+try{const s=localStorage.getItem('lang');if(s==='ar'||s==='en')lang=s}catch(e){}
+const t=k=>I18N[lang][k]??I18N.en[k]??k;
+const CATKEY=['cat0','cat1','cat2','cat3','cat4','cat5','cat6','cat7'];
 
-function applyLang() {
-  document.documentElement.lang = lang;
-  document.documentElement.dir  = lang === 'ar' ? 'rtl' : 'ltr';
-  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
-  document.getElementById('langBtn').textContent = lang === 'ar' ? 'English' : 'العربية';
-  lastKey = ''; if (last) render(last);
-}
-
-// ------------------------------------------------------------- helpers ----
-const $ = (id) => document.getElementById(id);
-// Build DOM nodes without innerHTML: every value (MACs, domain names...) goes in as text.
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (k === 'class') el.className = v;
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
+/* ---------- tiny helpers ---------- */
+const $=id=>document.getElementById(id);
+function h(tag,attrs,...kids){
+  const el=document.createElement(tag);
+  if(attrs)for(const k in attrs){
+    const v=attrs[k];
+    if(v==null||v===false)continue;
+    if(k==='class')el.className=v;
+    else if(k.startsWith('on'))el.addEventListener(k.slice(2),v);
+    else if(k==='style')el.style.cssText=v;
+    else if(v===true)el.setAttribute(k,'');
+    else el.setAttribute(k,v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  for(const c of kids.flat(9)){if(c==null||c===false)continue;el.append(c.nodeType?c:document.createTextNode(String(c)))}
   return el;
 }
-// Numbers + units stay left-to-right even inside Arabic text (LRI ... PDI isolate).
-const ltr = (s) => '\u2066' + s + '\u2069';
-function bytes(n) {
-  if (n < 1048576) return ltr((n / 1024).toFixed(0) + ' KB');
-  if (n < 1073741824) return ltr((n / 1048576).toFixed(0) + ' MB');
-  return ltr((n / 1073741824).toFixed(2) + ' GB');
-}
-function dur(s) {
-  const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-  return ltr(d ? `${d}d ${hh}h` : hh ? `${hh}h ${m}m` : `${m}m`);
-}
+const svg=(d)=>{const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 24 24');
+  for(const p of d){const e=document.createElementNS('http://www.w3.org/2000/svg','path');e.setAttribute('d',p);s.append(e)}return s};
+function fmtBytes(b){b=Number(b)||0;if(b<1024)return b+' B';if(b<1048576)return (b/1024).toFixed(0)+' KB';if(b<1073741824)return (b/1048576).toFixed(b<10485760?1:0)+' MB';return (b/1073741824).toFixed(2)+' GB'}
+const fmtKB=kb=>fmtBytes(kb*1024);
+function fmtUp(s){const d=Math.floor(s/86400),hh=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'d ':'')+hh+'h '+m+'m'}
+function fmtSpeed(kbps){if(kbps===-1)return t('default');if(kbps===0)return t('unlimited');const m=kbps/1000;return (m>=10?m.toFixed(0):m.toFixed(1).replace(/\.0$/,''))+' Mbps'}
+const toKbps=v=>Math.round(parseFloat(v)*1000);
 let toastTimer;
-function toast(msg) {
-  const el = $('toast').firstElementChild;
-  el.textContent = msg; el.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+function toast(msg){const e=$('toast');e.textContent=msg;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2400)}
+
+/* ---------- API ---------- */
+async function api(path,opts){
+  opts=opts||{};
+  const init={method:opts.method||'GET',headers:{'X-Requested-With':'dashboard'}};
+  if(opts.body)init.body=new URLSearchParams(opts.body);
+  const r=await fetch(path,init);
+  if(r.status===401){location.replace('/login');throw new Error('login')}
+  return r;
 }
-// All requests carry X-Requested-With: the firmware rejects POSTs without it (anti-CSRF).
-async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'X-Requested-With': 'dashboard', ...(opts.headers || {}) } });
-  if (res.status === 401) { location.reload(); throw new Error('auth'); }
-  return res;
-}
-const post = (path, data) => api(path, { method: 'POST', body: new URLSearchParams(data) });
-
-// Names are local to this browser; the firmware only knows MAC addresses.
-let names = {};
-try { names = JSON.parse(localStorage.getItem('names') || '{}'); } catch(e) {}
-const saveNames = () => { try { localStorage.setItem('names', JSON.stringify(names)); } catch(e) {} };
-
-// ------------------------------------------------------------- render -----
-let last = null, lastKey = '';
-
-async function act(path, data, okMsg) {
-  try {
-    const r = await post(path, data);
-    toast(r.ok ? (okMsg || t('ok')) : (await r.text()) || t('failed'));
-  } catch(e) { if (e.message !== 'auth') toast(t('failed')); }
-  refreshOnce();
+async function post(path,body){
+  try{const r=await api(path,{method:'POST',body});const txt=await r.text();return {ok:r.ok,text:txt}}
+  catch(e){return {ok:false,text:String(e.message||e)}}
 }
 
-function deviceCard(d) {
-  const used = d.bytesToday, limit = d.limitMB * 1048576;
-  const unlimited = d.limitMB === 0 || d.whitelisted;
-  const pct = unlimited ? 0 : Math.min(100, used / limit * 100);
-  const cls = unlimited ? 'free' : pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
-  const name = names[d.mac];
+/* ---------- state ---------- */
+const S={status:null,catalog:null,apps:null,learn:null,page:'overview',appsUser:'all'};
+const PAGES=[
+ ['overview','overview',['M3 12l9-8 9 8','M5 10v10h14V10']],
+ ['users','users',['M16 19v-1.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4V19','M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7','M20 19v-1.5a4 4 0 0 0-3-3.9','M16 4.2a3.5 3.5 0 0 1 0 6.6']],
+ ['apps','apps',['M4 4h6v6H4z','M14 4h6v6h-6z','M4 14h6v6H4z','M14 14h6v6h-6z']],
+ ['speed','speed',['M12 14l4-4','M3.5 18a9.5 9.5 0 1 1 17 0']],
+ ['settings','settings',['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6','M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z']],
+ ['system','system',['M12 3v9','M18.4 6.6a9 9 0 1 1-12.8 0']]
+];
+const userName=d=>d.name||(t('user_')+' '+d.userNo);
+const devByMac=m=>(S.status?.devices||[]).find(d=>d.mac===m);
+const appName=i=>S.catalog?.apps[i]?.[0]??('#'+i);
+const appCat=i=>S.catalog?.apps[i]?.[1]??7;
+const catLabel=c=>t(CATKEY[c]??'cat7');
 
-  const title = h('button', { class: 'dev-name', type: 'button', title: d.mac, onclick: () => renameDevice(d.mac) }, name || d.mac);
-  return h('div', { class: 'card' },
-    h('div', { class: 'dev-head' }, h('i', { class: 'dot' + (d.online ? ' ok' : '') }), title),
-    name ? h('div', { class: 'dev-mac' }, d.mac) : null,
-    h('div', { class: 'tags' },
-      d.blocked ? h('span', { class: 'tag blocked' }, t('blocked')) : null,
-      d.whitelisted ? h('span', { class: 'tag wl' }, t('whitelisted')) : null,
-      !d.online ? h('span', { class: 'tag off' }, t('offlineTag')) : null),
-    h('div', { class: 'bar' }, h('i', { class: cls, style: `width:${unlimited ? 100 : pct}%` })),
-    h('div', { class: 'usage' },
-      h('span', {}, `${bytes(used)} ${t('today')}`),
-      h('span', {}, unlimited ? t('unlimited') : `${t('of')} ${bytes(limit)}`)),
-    h('div', { class: 'actions' },
-      d.blocked
-        ? h('button', { class: 'btn ok', type: 'button', onclick: () => act('/api/unblock', { mac: d.mac }) }, t('unblock'))
-        : h('button', { class: 'btn danger', type: 'button', onclick: () => act('/api/block', { mac: d.mac }) }, t('block')),
-      h('button', { class: 'btn', type: 'button', onclick: () => act('/api/whitelist', { mac: d.mac, enabled: d.whitelisted ? 0 : 1 }) },
-        d.whitelisted ? t('unwhitelist') : t('whitelist')),
-      h('button', { class: 'btn', type: 'button', onclick: () => openLimit(d) }, t('setLimit'))));
-}
-
-function render(data) {
-  last = data;
-  const s = data.sys || {}, devs = data.devices || [];
-
-  // Header
-  $('subtitle').textContent = s.apSsid ? `${s.apSsid} · ${s.apIp}` : '';
-  $('linkDot').className = 'dot ok'; $('linkText').textContent = t('live');
-  $('pwBanner').hidden = !s.defaultPassword;
-  $('footer').textContent = `v${s.version || '?'}  ·  ${s.telegram ? t('telegramOn') : t('telegramOff')}` +
-                            (s.counting === false ? `  ·  ${t('counting')}` : '');
-
-  // Stat tiles
-  const online = devs.filter(d => d.online).length;
-  $('sOnline').textContent = online;
-  $('sOnlineHint').textContent = `${devs.length} ${t('tracked')}`;
-  $('sTotal').textContent = bytes(devs.reduce((a, d) => a + d.bytesToday, 0));
-  $('sUp').textContent = s.upstream ? t('connected') : t('offline');
-  $('sUpHint').textContent = s.upstream ? `${ltr(s.staSsid)} · ${ltr(s.rssi + ' dBm')} · ${t('ch')} ${s.channel}` : (s.staSsid || '');
-  $('sUptime').textContent = `${t('uptime')} ${dur(s.uptime || 0)}`;
-  $('sHeap').textContent = `${ltr(((s.heap || 0) / 1024).toFixed(0) + ' KB')} ${t('free')}`;
-
-  // Re-render the lists only when something changed, so open dialogs/focus are not disturbed.
-  const key = lang + JSON.stringify([devs, (data.dns || []).map(e => [e.ip, e.domain])]) + JSON.stringify(names);
-  if (key === lastKey) return;
-  lastKey = key;
-
-  const grid = $('devices');
-  grid.replaceChildren(...(devs.length ? devs.map(deviceCard) : [h('div', { class: 'empty card' }, t('noDevices'))]));
-
-  const log = $('dnsLog');
-  const dns = data.dns || [];
-  log.replaceChildren(...(dns.length ? dns.map(e => h('div', {},
-      h('span', { class: 'ip' }, e.ip), h('span', {}, e.domain), h('span', { class: 'age' }, `${e.ageSec}s`)))
-    : [h('div', { class: 'empty' }, t('noDns'))]));
-}
-
-// ----------------------------------------------------------- transport ----
-let ws, wsOk = false, pollTimer;
-function connect() {
-  try {
-    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  } catch(e) { startPolling(); return; }
-  ws.onopen    = () => { wsOk = true; stopPolling(); };
-  ws.onmessage = (ev) => { try { render(JSON.parse(ev.data)); } catch(e) {} };
-  ws.onclose   = () => { wsOk = false; setOffline(); startPolling(); setTimeout(connect, 3000); };
-}
-function setOffline() { $('linkDot').className = 'dot bad'; $('linkText').textContent = t('offline'); }
-async function refreshOnce() {
-  try { render(await (await api('/api/status')).json()); } catch(e) { if (e.message !== 'auth') setOffline(); }
-}
-function startPolling() { if (!pollTimer) pollTimer = setInterval(() => { if (!wsOk) refreshOnce(); }, 3000); }
-function stopPolling()  { clearInterval(pollTimer); pollTimer = null; }
-
-// -------------------------------------------------------------- dialogs ---
-let limitMac = '';
-function openLimit(d) {
-  limitMac = d.mac;
-  $('limitTitle').textContent = names[d.mac] || d.mac;
-  $('limitInput').value = d.limitMB;
-  $('limitDlg').showModal();
-}
-$('limitCancel').onclick = () => $('limitDlg').close();
-$('limitForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const mb = $('limitInput').value;
-  $('limitDlg').close();
-  act('/api/setLimit', { mac: limitMac, mb });
-});
-
-let nameMac = '';
-function renameDevice(mac) { nameMac = mac; $('nameInput').value = names[mac] || ''; $('nameDlg').showModal(); }
-$('nameCancel').onclick = () => $('nameDlg').close();
-$('nameForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const v = $('nameInput').value.trim();
-  if (v) names[nameMac] = v; else delete names[nameMac];
-  saveNames(); $('nameDlg').close(); lastKey = ''; if (last) render(last);
-});
-
-// ----------------------------------------------------------------- ping ---
-let pingPoll;
-$('pingBtn').onclick = async () => {
-  const out = $('pingResult'), btn = $('pingBtn');
-  out.textContent = t('pinging'); btn.disabled = true;
-  try {
-    const r = await post('/api/ping', { host: $('pingHost').value.trim() });
-    if (!r.ok) { out.textContent = await r.text(); btn.disabled = false; return; }
-    clearInterval(pingPoll);
-    let tries = 0;
-    pingPoll = setInterval(async () => {
-      tries++;
-      try {
-        const j = await (await api('/api/ping')).json();
-        if (j.state === 'done')  { out.textContent = `${j.host}: ${t('pingRes')(j)}`; done(); }
-        else if (j.state === 'error') { out.textContent = `${t('failed')}: ${j.error}`; done(); }
-        else if (tries > 20) { out.textContent = t('failed'); done(); }
-      } catch(e) { done(); }
-    }, 600);
-  } catch(e) { btn.disabled = false; }
-  function done() { clearInterval(pingPoll); btn.disabled = false; }
-};
-
-// ------------------------------------------------------------- settings ---
-async function loadSettings() {
-  try {
-    const s = await (await api('/api/settings')).json();
-    $('staSsid').placeholder = s.sta_ssid || '';
-    $('apSsid').placeholder  = s.ap_ssid || '';
-  } catch(e) {}
-}
-$('saveBtn').onclick = async () => {
-  const out = $('settingsStatus');
-  out.textContent = t('saving');
-  try {
-    const r = await post('/api/settings', {
-      sta_ssid: $('staSsid').value.trim(), sta_password: $('staPass').value,
-      ap_ssid: $('apSsid').value.trim(),   ap_password: $('apPass').value,
-      admin_password: $('adminPass').value,
-      tg_token: $('tgToken').value.trim(), tg_chat_id: $('tgChat').value.trim(),
-    });
-    const text = await r.text();
-    out.textContent = text;
-    if (r.ok && text.includes('rebooting')) {
-      out.textContent = t('rebooting');
-      setTimeout(() => location.reload(), 9000);
+/* ---------- navigation ---------- */
+function buildNav(){
+  for(const [host,id] of [[$('side'),'side'],[$('bottom'),'bottom']]){
+    host.replaceChildren();
+    if(id==='side')host.append(h('div',{class:'brand'},h('i',null,svg(['M3 13h18v7H3z','M8 10a5.7 5.7 0 0 1 8 0','M5.5 7.5a9.2 9.2 0 0 1 13 0'])),'ESP32 Repeater'));
+    for(const [key,label,icon] of PAGES){
+      host.append(h('button',{class:'nav',type:'button','aria-current':S.page===key?'page':null,onclick:()=>go(key)},svg(icon),t(label)));
     }
-  } catch(e) { if (e.message !== 'auth') out.textContent = t('failed'); }
+    if(id==='side'){host.append(h('div',{class:'grow'}));
+      host.append(h('button',{class:'nav',type:'button',onclick:()=>{lang=lang==='ar'?'en':'ar';try{localStorage.setItem('lang',lang)}catch(e){}applyLang()}},svg(['M3 5h12','M9 3v2','M5 11c2 3 5 5 8 6','M13 5c-1 5-4 9-9 12','M14 21l4-10 4 10','M15.5 18h5']),lang==='ar'?'English':'العربية'));
+      host.append(h('button',{class:'nav',type:'button',onclick:logout},svg(['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4','M16 17l5-5-5-5','M21 12H9']),t('logout')));
+    }
+  }
+}
+function go(p){S.page=p;history.replaceState(null,'','#'+p);buildNav();renderPage(true);window.scrollTo(0,0);poke()}
+async function logout(){await post('/api/logout',{});location.replace('/login')}
+function applyLang(){
+  document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';
+  document.querySelectorAll('[data-t]').forEach(e=>{e.textContent=t(e.dataset.t)});
+  buildNav();renderPage(true);renderConn();
+}
+
+/* ---------- renderers ---------- */
+let pageKey='';
+function typing(){const a=document.activeElement;return a&&(a.tagName==='INPUT'||a.tagName==='SELECT')&&$('page').contains(a)}
+function renderPage(force){
+  const st=S.status;
+  $('title').textContent=t(S.page);
+  renderBanner();
+  if(!st){if(force)$('page').replaceChildren(h('div',{class:'empty'},'...'));return}
+  const live=['overview','users','apps'].includes(S.page);
+  if(!force&&(!live||typing()))return live?undefined:updateLive();
+  const R={overview:rOverview,users:rUsers,apps:rApps,speed:rSpeed,settings:rSettings,system:rSystem}[S.page];
+  const y=window.scrollY;
+  $('page').replaceChildren(R());
+  if(!force)window.scrollTo(0,y);
+}
+function renderBanner(){
+  const b=$('banner');b.replaceChildren();
+  const st=S.status;if(!st)return;
+  if(st.sys.defaultPassword)b.append(h('div',{class:'banner'},t('defPass')));
+  if(!st.sys.counting)b.append(h('div',{class:'banner'},t('noCount')));
+}
+function renderConn(){
+  const ok=live.ok;const c=$('conn');c.replaceChildren(h('span',{class:'dot '+(ok?'on':'off')}),ok?t('connected'):t('offline'));
+}
+
+function catBar(cats){
+  const tot=cats.reduce((a,b)=>a+b,0);
+  const bar=h('div',{class:'bar',role:'img','aria-label':t('byCategory')});
+  const leg=h('div',{class:'legend'});
+  if(tot>0)cats.forEach((v,i)=>{if(!v)return;bar.append(h('i',{style:`width:${(v/tot*100).toFixed(2)}%;background:var(--c${i})`}));
+    leg.append(h('span',null,h('em',{style:`background:var(--c${i})`}),catLabel(i)+' '+Math.round(v/tot*100)+'%'))});
+  return [bar,leg];
+}
+
+function rOverview(){
+  const st=S.status,sys=st.sys;
+  const devs=st.devices;
+  const online=devs.filter(d=>d.online).length;
+  const todayTotal=devs.reduce((a,d)=>a+d.bytesToday,0);
+  const cats=Array(8).fill(0);devs.forEach(d=>d.cats.forEach((v,i)=>cats[i]+=v));
+  const topUsers=[...devs].sort((a,b)=>b.bytesToday-a.bytesToday).slice(0,5);
+  const maxB=Math.max(1,...topUsers.map(d=>d.bytesToday));
+  const stat=(l,v)=>h('div',{class:'stat'},h('span',null,l),h('b',null,v));
+  return h('div',null,
+   h('div',{class:'stats'},
+     stat(t('internet'),h('span',{class:'row'},h('span',{class:'dot '+(sys.upstream?'on':'off')}),sys.upstream?sys.staSsid:'—')),
+     stat(t('devices'),online+' / '+devs.length),
+     stat(t('usedToday'),fmtBytes(todayTotal)),
+     stat(t('signal'),sys.upstream?sys.rssi+' dBm':'—')),
+   h('div',{class:'card'},h('h2',null,t('byCategory')),...(cats.some(v=>v)?catBar(cats):[h('div',{class:'empty'},t('noApps'))])),
+   h('div',{class:'card'},h('h2',null,t('users')),
+     topUsers.length?h('table',null,...topUsers.map(d=>h('tr',null,
+        h('td',null,h('span',{class:'dot '+(d.online?'on':'')}),' ',userName(d)),
+        h('td',{style:'width:38%'},h('div',{class:'hbar'},h('i',{style:`width:${(d.bytesToday/maxB*100).toFixed(1)}%`}))),
+        h('td',{class:'n'},fmtBytes(d.bytesToday))))):h('div',{class:'empty'},t('noUsers'))),
+   h('div',{class:'note'},t('saveNote')));
+}
+
+function topAppsFor(mac,n){
+  const list=(S.apps?.devices?.[mac]||[]).filter(p=>p[0]!==0).sort((a,b)=>b[1]-a[1]).slice(0,n);
+  return list;
+}
+function rUsers(){
+  const devs=[...S.status.devices].sort((a,b)=>(b.online-a.online)||(a.userNo-b.userNo));
+  if(!devs.length)return h('div',{class:'empty'},t('noUsers'));
+  return h('div',{class:'grid'},...devs.map(d=>{
+    const apps=topAppsFor(d.mac,4);
+    const tags=[];
+    if(d.blocked)tags.push(h('span',{class:'tag red'},t('blocked')));
+    if(d.whitelisted)tags.push(h('span',{class:'tag green'},t('trusted')));
+    if(d.limitMB>0)tags.push(h('span',{class:'tag amber'},fmtBytes(d.bytesToday)+' / '+d.limitMB+' MB'));
+    if(d.down!==-1||d.up!==-1)tags.push(h('span',{class:'tag'},'↓ '+fmtSpeed(d.down)+'  ↑ '+fmtSpeed(d.up)));
+    return h('div',{class:'card user'},
+      h('div',{class:'row'},
+        h('div',{class:'avatar'},d.userNo),
+        h('div',{style:'flex:1;min-width:0'},h('div',{class:'name'},userName(d)),
+          h('div',{class:'muted small dom'},(d.ip||d.mac)+' · ',h('span',{class:'dot '+(d.online?'on':'')}),' ',d.online?t('online'):t('offlineU'))),
+        h('button',{class:'btn sm',type:'button',onclick:()=>openDialog(d.mac)},t('rename'))),
+      h('div',{class:'row between'},h('span',{class:'muted small'},t('today')),h('b',null,fmtBytes(d.bytesToday))),
+      ...catBar(d.cats),
+      apps.length?h('div',{class:'small'},...apps.map(p=>h('div',{class:'row between',style:'padding:2px 0'},h('span',null,appName(p[0])),h('span',{class:'muted'},fmtKB(p[1]))))):null,
+      tags.length?h('div',{class:'row wrap',style:'gap:6px'},...tags):null,
+      h('div',{class:'muted small'},t('allTime')+': '+fmtBytes(d.bytesAllTime)));
+  }));
+}
+
+function appOptions(selected){
+  const sel=h('select',null);
+  const cats=S.catalog?S.catalog.cats.length:8;
+  for(let c=0;c<cats;c++){
+    const og=h('optgroup',{label:catLabel(c)});
+    (S.catalog?.apps||[]).forEach((a,i)=>{if(a[1]===c)og.append(h('option',{value:i,selected:i===selected?true:null},a[0]))});
+    if(og.children.length)sel.append(og);
+  }
+  return sel;
+}
+function rApps(){
+  const root=h('div',null);
+  if(!S.catalog||!S.apps)return h('div',{class:'empty'},'...');
+  const src=S.appsUser==='all'?S.apps.total:(S.apps.devices[S.appsUser]||[]);
+  const list=[...src].sort((a,b)=>b[1]-a[1]);
+  const cats=Array(8).fill(0);list.forEach(p=>cats[appCat(p[0])]+=p[1]);
+  const max=Math.max(1,...list.map(p=>p[1]));
+  const sel=h('select',{'aria-label':t('user'),onchange:e=>{S.appsUser=e.target.value;renderPage(true)}},
+    h('option',{value:'all',selected:S.appsUser==='all'?true:null},t('thisDevice')),
+    ...S.status.devices.map(d=>h('option',{value:d.mac,selected:S.appsUser===d.mac?true:null},userName(d))));
+  root.append(h('div',{class:'card'},h('div',{class:'row between wrap'},h('h2',{style:'margin:0'},t('usage')),h('div',{style:'min-width:180px'},sel)),
+     h('div',{style:'height:10px'}),...(cats.some(v=>v)?catBar(cats):[h('div',{class:'empty'},t('noApps'))])));
+  root.append(h('div',{class:'card'},h('h2',null,t('byApp')),
+     list.length?h('table',null,...list.slice(0,25).map(p=>h('tr',null,
+        h('td',null,appName(p[0])+' ',h('span',{class:'tag'},catLabel(appCat(p[0])))),
+        h('td',{style:'width:30%'},h('div',{class:'hbar'},h('i',{style:`width:${(p[1]/max*100).toFixed(1)}%;background:var(--c${appCat(p[0])})`}))),
+        h('td',{class:'n'},fmtKB(p[1]))))):h('div',{class:'empty'},t('noApps'))));
+  root.append(h('div',{class:'card'},h('h2',null,t('liveDomains')),
+     S.status.dns.length?h('table',null,...S.status.dns.slice(0,15).map(e=>h('tr',null,
+        h('td',{class:'dom'},e.domain),h('td',null,e.app?h('span',{class:'tag'},appName(e.app)):h('span',{class:'tag amber'},'?')),
+        h('td',{class:'muted small'},e.who||e.ip)))):h('div',{class:'empty'},t('noDomains'))));
+  root.append(learnCard());
+  root.append(h('div',{class:'note'},t('appsNote')));
+  return root;
+}
+function learnCard(){
+  const L=S.learn||{rules:[],unknown:[]};
+  const card=h('div',{class:'card'},h('h2',null,t('unknown')),h('div',{class:'muted small',style:'margin-bottom:8px'},t('unknownHint')));
+  if(!L.unknown.length)card.append(h('div',{class:'empty'},t('noUnknown')));
+  for(const u of L.unknown.slice(0,15)){
+    const sel=appOptions(0);sel.setAttribute('aria-label',t('app'));
+    const suffix=guessSuffix(u.domain);
+    const inp=h('input',{value:suffix,'aria-label':t('domainSuffix')});
+    card.append(h('div',{style:'padding:8px 0;border-top:1px solid var(--line)'},
+      h('div',{class:'dom small'},u.domain+'  ',h('span',{class:'muted'},'×'+u.count+(u.who?' · '+u.who:''))),
+      h('div',{class:'row',style:'margin-top:6px'},inp,h('div',{style:'max-width:170px'},sel),
+        h('button',{class:'btn sm',type:'button',onclick:()=>addRule(inp.value,sel.value)},t('assign')))));
+  }
+  if(L.unknown.length)card.append(h('div',{style:'margin-top:8px'},h('button',{class:'btn sm',type:'button',onclick:async()=>{await post('/api/unknown/clear',{});await loadLearn();renderPage(true)}},t('clear'))));
+  card.append(h('h2',{style:'margin-top:18px'},t('rules')));
+  if(!L.rules.length)card.append(h('div',{class:'muted small'},t('noRules')));
+  for(const r of L.rules)card.append(h('div',{class:'row between',style:'padding:5px 0'},h('span',{class:'dom'},r.suffix+' → '+appName(r.app)),
+    h('button',{class:'btn sm danger',type:'button',onclick:async()=>{const x=await post('/api/rules/del',{suffix:r.suffix});toast(x.ok?t('saved'):t('failed'));await loadLearn();renderPage(true)}},t('remove'))));
+  const sel=appOptions(0);sel.setAttribute('aria-label',t('app'));
+  const inp=h('input',{placeholder:t('domainSuffix'),'aria-label':t('domainSuffix'),autocapitalize:'off',spellcheck:'false'});
+  card.append(h('h2',{style:'margin-top:18px'},t('addRule')),
+    h('div',{class:'row wrap'},h('div',{style:'flex:1;min-width:150px'},inp),h('div',{style:'min-width:150px'},sel),
+      h('button',{class:'btn primary',type:'button',onclick:()=>addRule(inp.value,sel.value)},t('save'))));
+  return card;
+}
+function guessSuffix(d){const p=d.split('.');if(p.length<=2)return d;
+  const sl=['co','com','net','org','gov','edu'];return (p.length>2&&p[p.length-1].length===2&&sl.includes(p[p.length-2]))?p.slice(-3).join('.'):p.slice(-2).join('.')}
+async function addRule(suffix,app){
+  const x=await post('/api/rules/add',{suffix:suffix.trim().toLowerCase(),app});
+  toast(x.ok?t('saved'):(x.text||t('failed')));
+  await loadLearn();renderPage(true);
+}
+
+let speedForm=null;
+function mbpsBox(kbps,ph){return h('input',{type:'number',min:'0',step:'0.1',inputmode:'decimal',value:kbps>0?String(kbps/1000):(kbps===0?'0':''),placeholder:ph||'0'})}
+function rSpeed(){
+  const sp=S.status.speed;
+  const gd=mbpsBox(sp.globalDown),gu=mbpsBox(sp.globalUp),dd=mbpsBox(sp.defaultDown),du=mbpsBox(sp.defaultUp);
+  const msg=h('div',{class:'msg'});
+  const num=i=>{const v=i.value.trim();return v===''?0:toKbps(v)};
+  const save=h('button',{class:'btn primary',type:'button',onclick:async()=>{
+    const vals=[gd,gu,dd,du].map(num);
+    if(vals.some(v=>!Number.isFinite(v)||v<0||v>1000000)){msg.className='msg err';msg.textContent=t('failed');return}
+    const x=await post('/api/speedDefaults',{gdown:vals[0],gup:vals[1],ddown:vals[2],dup:vals[3]});
+    msg.className='msg '+(x.ok?'ok':'err');msg.textContent=x.ok?t('saved'):(x.text||t('failed'));
+    if(x.ok)poke();
+  }},t('saveSpeed'));
+  const field=(l,i)=>h('div',null,h('label',{class:'f'},l),i);
+  return h('div',null,
+   h('div',{class:'card'},h('h2',null,t('globalCap')),h('div',{class:'two'},field(t('downMbps'),gd),field(t('upMbps'),gu)),
+     h('h2',{style:'margin-top:18px'},t('defaultCap')),h('div',{class:'two'},field(t('downMbps'),dd),field(t('upMbps'),du)),
+     h('div',{class:'note'},t('speedNote')),h('div',{style:'margin-top:12px'},save),msg),
+   h('div',{class:'card'},h('h2',null,t('perUser')),
+     S.status.devices.length?h('table',null,...S.status.devices.map(d=>h('tr',{'data-mac':d.mac},
+        h('td',null,userName(d)),h('td',{class:'n small'},'↓ '+fmtSpeed(d.down)),h('td',{class:'n small'},'↑ '+fmtSpeed(d.up)),
+        h('td',{style:'text-align:end'},h('button',{class:'btn sm',type:'button',onclick:()=>openDialog(d.mac)},t('editUser')))))):h('div',{class:'empty'},t('noUsers'))));
+}
+
+let settingsMsg;
+function rSettings(){
+  const ids={};
+  const fld=(key,label,type)=>{const i=h('input',{type:type||'text',autocomplete:'off',autocapitalize:'off',spellcheck:'false'});ids[key]=i;return h('div',null,h('label',{class:'f'},label),i)};
+  const msg=h('div',{class:'msg'});
+  const wrap=h('div',null,h('div',{class:'card'},
+    h('h2',null,t('wifi')),
+    h('div',{class:'two'},fld('sta_ssid',t('staSsid')),fld('sta_password',t('staPass'),'password'),fld('ap_ssid',t('apSsid')),fld('ap_password',t('apPass'),'password')),
+    h('h2',{style:'margin-top:18px'},t('adminPass')),fld('admin_password',t('adminPass'),'password'),
+    h('h2',{style:'margin-top:18px'},'Telegram'),h('div',{class:'two'},fld('tg_token',t('tgToken'),'password'),fld('tg_chat_id',t('tgChat'))),
+    h('div',{class:'note'},t('keepBlank')),
+    h('div',{style:'margin-top:12px'},h('button',{class:'btn primary',type:'button',onclick:async()=>{
+      const body={};for(const k in ids)body[k]=ids[k].value;
+      const x=await post('/api/settings',body);
+      msg.className='msg '+(x.ok?'ok':'err');msg.textContent=x.text||(x.ok?t('saved'):t('failed'));
+    }},t('saveReboot'))),msg));
+  api('/api/settings').then(r=>r.json()).then(j=>{ids.sta_ssid.placeholder=j.sta_ssid||'';ids.ap_ssid.placeholder=j.ap_ssid||''}).catch(()=>{});
+  return wrap;
+}
+
+function rSystem(){
+  const sys=S.status.sys;
+  const row=(l,v)=>h('tr',null,h('td',{class:'muted'},l),h('td',{id:'sys_'+l,style:'text-align:end'},v));
+  const pingHost=h('input',{placeholder:t('pingHost'),autocapitalize:'off'}),pingOut=h('div',{class:'msg'});
+  const runPing=h('button',{class:'btn',type:'button',onclick:async()=>{
+    runPing.disabled=true;pingOut.className='msg';pingOut.textContent='...';
+    const x=await post('/api/ping',{host:pingHost.value.trim()});
+    if(!x.ok){pingOut.className='msg err';pingOut.textContent=x.text;runPing.disabled=false;return}
+    for(let i=0;i<30;i++){
+      await new Promise(r=>setTimeout(r,700));
+      try{const j=await (await api('/api/ping')).json();
+        if(j.state==='done'){pingOut.className='msg ok';pingOut.textContent=`${j.host}: ${j.received}/${j.sent}, ${j.lossPct}% loss, ${j.avgMs} ms`;break}
+        if(j.state==='error'){pingOut.className='msg err';pingOut.textContent=j.error||t('failed');break}}catch(e){break}
+    }
+    runPing.disabled=false;
+  }},t('run'));
+  return h('div',null,
+   h('div',{class:'card'},h('table',null,
+     row(t('version'),sys.version),row(t('uptime'),fmtUp(sys.uptime)),row(t('freeMem'),fmtBytes(sys.heap)),
+     row(t('homeWifi'),sys.staSsid+(sys.upstream?' ('+sys.staIp+')':'')),row(t('repeater'),sys.apSsid+' ('+sys.apIp+')'),row(t('channel'),sys.channel))),
+   h('div',{class:'card'},h('h2',null,t('ping')),h('div',{class:'row'},pingHost,runPing),pingOut),
+   h('div',{class:'card'},h('h2',null,t('update')),otaBox('firmware',t('updFw')),h('div',{style:'height:14px'}),otaBox('ui',t('updUi')),h('div',{class:'note'},t('updNote'))),
+   h('div',{class:'row wrap'},
+     h('button',{class:'btn danger',type:'button',onclick:async()=>{if(confirm(t('rebootAsk'))){await post('/api/reboot',{});toast(t('updDone'))}}},t('reboot')),
+     h('button',{class:'btn',type:'button',onclick:logout},t('logout'))));
+}
+function otaBox(type,label){
+  const file=h('input',{type:'file',accept:'.bin','aria-label':label});
+  const prog=h('progress',{max:'100',value:'0',style:'display:none'});
+  const msg=h('div',{class:'msg'});
+  const btn=h('button',{class:'btn primary',type:'button',onclick:()=>{
+    if(!file.files.length){msg.className='msg err';msg.textContent=t('pickFile');return}
+    const fd=new FormData();fd.append('file',file.files[0]);
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST','/api/ota?type='+type);
+    xhr.setRequestHeader('X-Requested-With','dashboard');
+    btn.disabled=true;prog.style.display='';msg.className='msg';msg.textContent=t('uploading');
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)prog.value=e.loaded/e.total*100};
+    xhr.onload=()=>{
+      let err='';try{err=JSON.parse(xhr.responseText).error||''}catch(e){}
+      if(xhr.status===200){msg.className='msg ok';msg.textContent=t('updDone');setTimeout(()=>location.reload(),9000)}
+      else if(xhr.status===401){location.replace('/login')}
+      else{msg.className='msg err';msg.textContent=err||t('failed');btn.disabled=false}
+    };
+    xhr.onerror=()=>{msg.className='msg err';msg.textContent=t('failed');btn.disabled=false};
+    xhr.send(fd);
+  }},t('upload'));
+  return h('div',null,h('label',{class:'f'},label),h('div',{class:'row wrap'},h('div',{style:'flex:1;min-width:200px'},file),btn),prog,msg);
+}
+function updateLive(){
+  // Speed page: refresh the per-user table values only when nothing is being typed.
+  if(S.page==='speed')for(const tr of document.querySelectorAll('#page tr[data-mac]')){
+    const d=devByMac(tr.dataset.mac);if(!d)continue;
+    tr.children[1].textContent='↓ '+fmtSpeed(d.down);tr.children[2].textContent='↑ '+fmtSpeed(d.up);
+  }
+}
+
+/* ---------- user dialog ---------- */
+let dlgMac=null;
+function openDialog(mac){
+  const d=devByMac(mac);if(!d)return;
+  dlgMac=mac;
+  $('dlgTitle').textContent=userName(d);
+  $('dlgSub').textContent=(d.ip?d.ip+' · ':'')+d.mac;
+  $('dName').value=d.name||'';$('dName').placeholder=t('user_')+' '+d.userNo;
+  $('dLimit').value=d.limitMB||'';
+  $('dDown').value=d.down>=0?d.down/1000:'';$('dUp').value=d.up>=0?d.up/1000:'';
+  $('dWhite').checked=!!d.whitelisted;
+  $('dBlock').textContent=d.blocked?t('unblock'):t('block');
+  $('dMsg').textContent='';$('dMsg').className='msg';
+  $('dlg').showModal();
+}
+$('dCancel').onclick=()=>$('dlg').close();
+$('dBlock').onclick=async()=>{
+  const d=devByMac(dlgMac);if(!d)return;
+  const x=await post(d.blocked?'/api/unblock':'/api/block',{mac:dlgMac});
+  if(x.ok){$('dlg').close();poke()}else{$('dMsg').className='msg err';$('dMsg').textContent=x.text}
+};
+$('dSave').onclick=async()=>{
+  const d=devByMac(dlgMac);if(!d)return;
+  const bad=m=>{$('dMsg').className='msg err';$('dMsg').textContent=m;return false};
+  const sp=v=>{v=v.trim();return v===''?'default':String(toKbps(v))};
+  const down=sp($('dDown').value),up=sp($('dUp').value);
+  if([down,up].some(v=>v!=='default'&&!(Number(v)>=0&&Number(v)<=1000000)))return bad(t('failed'));
+  const limit=$('dLimit').value.trim()===''?'0':$('dLimit').value.trim();
+  if(!/^\d+$/.test(limit))return bad(t('failed'));
+  const jobs=[
+    post('/api/rename',{mac:dlgMac,name:$('dName').value.trim()}),
+    post('/api/setLimit',{mac:dlgMac,mb:limit}),
+    post('/api/speed',{mac:dlgMac,down,up}),
+    post('/api/whitelist',{mac:dlgMac,enabled:$('dWhite').checked?'1':'0'})
+  ];
+  const res=await Promise.all(jobs);
+  const fail=res.find(r=>!r.ok);
+  if(fail)return bad(fail.text||t('failed'));
+  $('dlg').close();toast(t('saved'));poke();
 };
 
-// ----------------------------------------------------------------- init ---
-$('langBtn').onclick = () => {
-  lang = lang === 'ar' ? 'en' : 'ar';
-  try { localStorage.setItem('lang', lang); } catch(e) {}
-  applyLang();
-};
-$('linkText').textContent = t('connecting');
-applyLang();
-loadSettings();
-refreshOnce();
-connect();
+/* ---------- data loading ---------- */
+const live={ok:false,ws:null,timer:null};
+function onStatus(j){
+  S.status=j;live.ok=true;renderConn();renderPage(false);
+}
+async function loadStatus(){try{onStatus(await (await api('/api/status')).json())}catch(e){if(e.message!=='login'){live.ok=false;renderConn()}}}
+async function loadApps(){try{S.apps=await (await api('/api/apps')).json()}catch(e){}}
+async function loadLearn(){try{S.learn=await (await api('/api/learn')).json()}catch(e){}}
+let lastSlow=0;
+async function poke(){
+  await loadStatus();
+  if(['apps','users'].includes(S.page)){await loadApps();if(S.page==='apps')await loadLearn();renderPage(false)}
+  lastSlow=Date.now();
+}
+function openWs(){
+  try{
+    const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
+    live.ws=ws;
+    ws.onmessage=e=>{try{onStatus(JSON.parse(e.data))}catch(x){}};
+    ws.onclose=()=>{live.ws=null;live.ok=false;renderConn()};
+  }catch(e){}
+}
+async function tick(){
+  if(document.hidden)return;
+  if(!live.ws||live.ws.readyState!==1){await loadStatus();if(!live.ws)openWs()}
+  if(Date.now()-lastSlow>5000&&['apps','users'].includes(S.page)){
+    lastSlow=Date.now();await loadApps();if(S.page==='apps')await loadLearn();renderPage(false);
+  }
+}
+
+/* ---------- start ---------- */
+(async function init(){
+  const hash=location.hash.slice(1);if(PAGES.some(p=>p[0]===hash))S.page=hash;
+  document.querySelectorAll('[data-t]').forEach(e=>{e.textContent=t(e.dataset.t)});
+  document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';
+  buildNav();renderConn();
+  try{S.catalog=await (await api('/api/catalog')).json()}catch(e){}
+  await poke();
+  openWs();
+  setInterval(tick,3000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)poke()});
+})();
 </script>
 </body>
 </html>
