@@ -17,3 +17,5 @@ bool ota_begin(bool ui, String &err);
 bool ota_write(const uint8_t *data, size_t len, String &err);
 bool ota_end(bool ui, String &err);
 void ota_abort();
+
+bool ota_busy();                   // an update is being written right now

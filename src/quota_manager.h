@@ -25,6 +25,9 @@ struct DeviceUsage {
     int8_t   rssi;                      // filled in by quota_snapshot(): signal in dBm, 0 when offline
     bool     kickPending;               // internal: deauth this station from the main loop
     bool     quotaOverride;             // manually unblocked: ignore the quota until the daily reset
+    bool     warnSent;                  // the 80% notice was already triggered today
+    bool     warnPending;               // the user has not seen it yet
+    uint32_t warnSince;                 // millis() when it was triggered
     uint32_t lastSeenMs;                // millis() of the last frame
     Bucket   dl, ul;                    // internal: speed limiter state
 };
@@ -74,4 +77,26 @@ void        quota_setSpeedConfig(const SpeedConfig &cfg);
 
 void quota_resetDaily();
 bool quota_hooksInstalled();
+bool quota_forget(const char *macStr);              // remove a device that is not connected
+
+// ---- what a user sees about himself (looked up by the address he connects from) ----
+struct ClientInfo {
+    char     name[NAME_MAX_BYTES + 1];
+    uint8_t  userNo;
+    char     macStr[18];
+    uint64_t bytesToday;
+    uint32_t limitMB;
+    uint32_t downKbps, upKbps;          // SPEED_DEFAULT already resolved to the default
+    bool     blocked;                   // paused (by the quota or by the admin)
+    bool     quotaHit;                  // ... because the daily limit was reached
+    bool     whitelisted;
+    bool     warnPending;
+};
+bool quota_clientInfo(uint32_t ip, ClientInfo &out);
+void quota_ackNotice(uint32_t ip);                    // "OK, continue" on the 80% notice
+// Should this client's DNS answer lead to the notice page? Blocked / internet off: every name.
+// A fresh 80% notice: only the names phones use to detect a login page (isCheck).
+bool quota_wantsNotice(uint32_t ip, bool isCheck);
+bool quota_noticeEnabled();
+void quota_setNoticeEnabled(bool on);
 bool quota_isTrustedIp(uint32_t ip);    // is the device holding this address marked trusted?

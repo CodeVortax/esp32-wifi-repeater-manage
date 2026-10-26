@@ -22,3 +22,9 @@ void dns_baseDomain(const char *name, char *out, int outSize);
 // other type gets "no data". Returns the reply length, or 0 when the query is not a plain
 // single-question query (the caller then forwards it normally).
 int dns_buildBlocked(const uint8_t *query, int len, uint8_t *out, int cap);
+
+// Same, but type A is answered with the given address (the repeater's own page) and TTL.
+int dns_buildAnswerA(const uint8_t *query, int len, uint8_t *out, int cap, const uint8_t ip[4], uint32_t ttl);
+
+// Names phones and laptops look up to find out whether a network wants a login ("captive portal").
+bool dns_isConnectivityCheck(const char *name);

@@ -36,6 +36,13 @@
 #define QUOTA_SAVE_INTERVAL_MS   (60UL * 1000UL)
 #define MAX_SPEED_KBPS           1000000UL  // 1 Gbit/s, the largest value the API accepts
 
+// ---------------- Notices to users ----------------
+// At this share of the daily limit a user is told (a "sign in to network" style page opens on
+// the phone). At 100% the internet pauses and the same page explains why. The page is also at
+// http://<repeater>/my_usage for anyone who wants to look.
+#define QUOTA_WARN_PERCENT       80
+#define NOTICE_PENDING_MS        (30UL * 60UL * 1000UL)   // an unread 80% notice stops being offered after this
+
 // ---------------- App recognition ----------------
 #define MAX_CUSTOM_RULES         24
 #define UNKNOWN_DOMAIN_MAX       40

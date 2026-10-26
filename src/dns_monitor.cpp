@@ -259,6 +259,24 @@ static void dnsTask(void *) {
         char domain[96];
         uint8_t qApp = APP_OTHER;
         if (dns_parseQName(query, len, domain, sizeof(domain))) {
+            // The repeater's own pages: "usage.lan" / "my.usage" are always the repeater, and a client that is
+            // paused (limit reached, blocked, internet off) or has an unread 80% notice is sent to the
+            // notice page: every name for a paused client, only the "is there a login page?" names for a notice.
+            {
+                bool mine = strcmp(domain, "usage.lan") == 0 || strcmp(domain, "my.usage") == 0;
+                bool notice = !mine && quota_wantsNotice((uint32_t)clientIp, dns_isConnectivityCheck(domain));
+                if (mine || notice) {
+                    IPAddress ap = WiFi.softAPIP();
+                    uint8_t apIp[4] = { ap[0], ap[1], ap[2], ap[3] };
+                    int bl = dns_buildAnswerA(query, len, reply, sizeof(reply), apIp, mine ? 60 : 5);
+                    if (bl > 0) {
+                        server.beginPacket(clientIp, clientPort);
+                        server.write(reply, bl);
+                        server.endPacket();
+                        continue;
+                    }
+                }
+            }
             // "Internet off": nobody except trusted devices gets an answer that leads anywhere.
             if (quota_internetOff() && !quota_isTrustedIp((uint32_t)clientIp)) {
                 int bl = dns_buildBlocked(query, len, reply, sizeof(reply));

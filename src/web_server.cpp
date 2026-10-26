@@ -177,6 +177,22 @@ static void fillApps(JsonArray arr, const uint64_t *bytes) {
     }
 }
 
+// The Host header of a request that came to us only because DNS sent a paused user here
+// ("example.com", "connectivitycheck.gstatic.com"): anything that is not our own address.
+static bool foreignHost(AsyncWebServerRequest *req) {
+    String host = req->host();
+    int colon = host.indexOf(':');
+    if (colon >= 0) host = host.substring(0, colon);
+    if (host.length() == 0) return false;
+    if (host == WiFi.softAPIP().toString() || host == WiFi.localIP().toString()) return false;
+    if (host == "usage.lan" || host == "my.usage") return false;
+    return true;
+}
+
+static void redirectToUsage(AsyncWebServerRequest *req) {
+    req->redirect(String("http://") + WiFi.softAPIP().toString() + "/my_usage");
+}
+
 static bool uiMissing = false;           // dashboard files not found in the SPIFFS (checked once at start)
 
 static String buildStatusJson() {
@@ -199,6 +215,9 @@ static String buildStatusJson() {
     sys["time"]            = (uint32_t)time(nullptr);
     sys["txLevel"]         = wifiRepeater_getTxLevel();
     sys["internetOff"]     = quota_internetOff();
+    sys["notify"]          = quota_noticeEnabled();
+    sys["apMac"]           = WiFi.softAPmacAddress();
+    sys["staMac"]          = WiFi.macAddress();
     sys["saveFailures"]    = quota_saveFailures();
     sys["lowMem"]          = sysinfo_lowMemory();
     sys["uiMissing"]       = uiMissing;
@@ -339,16 +358,90 @@ void webServer_init() {
 
     // ---- pages ----
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
+        if (foreignHost(req)) { redirectToUsage(req); return; }           // a paused user's browser
         if (uiMissing) { sendRecovery(req); return; }                     // repair page
         if (!isAuthed(req)) { req->redirect("/login"); return; }
         sendPage(req, "/index.html");
     });
     server.on("/login", HTTP_GET, [](AsyncWebServerRequest *req) {
+        if (foreignHost(req)) { redirectToUsage(req); return; }
         if (uiMissing) { sendRecovery(req); return; }
         if (isAuthed(req)) { req->redirect("/"); return; }
         sendPage(req, "/login.html");
     });
     server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *req) { req->send(204); });
+
+    // ---- "my usage": open to everybody, but each device only ever sees itself (found by its address) ----
+    auto usagePage = [](AsyncWebServerRequest *req) {
+        if (!SPIFFS.exists("/my.html")) { req->send(200, "text/plain", "The usage page is missing. Update the dashboard files from System > Update."); return; }
+        AsyncWebServerResponse *r = req->beginResponse(SPIFFS, "/my.html", "text/html");
+        r->addHeader("Cache-Control", "no-store");
+        req->send(r);
+    };
+    server.on("/my_usage", HTTP_GET, usagePage);
+    server.on("/my", HTTP_GET, usagePage);
+    server.on("/usage", HTTP_GET, usagePage);
+
+    server.on("/api/my", HTTP_GET, [](AsyncWebServerRequest *req) {
+        ClientInfo ci;
+        if (!quota_clientInfo((uint32_t)req->client()->remoteIP(), ci)) { sendJson(req, 404, "{\"error\":\"unknown\"}"); return; }
+        JsonDocument doc;
+        uint32_t pct = ci.limitMB ? (uint32_t)(ci.bytesToday * 100ULL / ((uint64_t)ci.limitMB * 1048576ULL)) : 0;
+        const char *state = "ok";
+        if (quota_internetOff() && !ci.whitelisted) state = "off";
+        else if (ci.quotaHit)                        state = "limit";
+        else if (ci.blocked)                         state = "blocked";
+        else if (ci.limitMB && pct >= QUOTA_WARN_PERCENT) state = "warn";
+        char label[40];
+        if (ci.name[0]) strlcpy(label, ci.name, sizeof(label)); else snprintf(label, sizeof(label), "User %u", ci.userNo);
+        doc["name"] = label;
+        doc["state"] = state;
+        doc["pending"] = ci.warnPending;
+        doc["usedBytes"] = ci.bytesToday;
+        doc["limitMB"] = ci.limitMB;
+        doc["down"] = ci.downKbps;
+        doc["up"] = ci.upKbps;
+        doc["ads"] = adblock_blockedFor((uint32_t)req->client()->remoteIP());
+
+        uint64_t *ab = (uint64_t *)malloc(APP_COUNT * sizeof(uint64_t));
+        uint32_t (*hours)[CAT_COUNT] = (uint32_t (*)[CAT_COUNT])malloc(24 * CAT_COUNT * sizeof(uint32_t));
+        uint32_t *mask = (uint32_t *)malloc(APP_COUNT * sizeof(uint32_t));
+        JsonArray cats = doc["cats"].to<JsonArray>();
+        JsonArray apps = doc["apps"].to<JsonArray>();
+        JsonArray hs = doc["hours"].to<JsonArray>();
+        uint64_t catSum[CAT_COUNT] = {0};
+        if (ab && quota_appBytes(ci.macStr, ab)) {
+            // the biggest six apps
+            for (int k = 0; k < 6; k++) {
+                int best = -1;
+                for (int a = 1; a < APP_COUNT; a++) if (ab[a] > 0 && (best < 0 || ab[a] > ab[best])) best = a;
+                if (best < 0) break;
+                JsonArray p = apps.add<JsonArray>();
+                p.add(apps_name(best));
+                p.add((uint32_t)(ab[best] >> 10));
+                ab[best] = 0;
+            }
+        }
+        if (ab) { quota_appBytes(ci.macStr, ab); for (int a = 0; a < APP_COUNT; a++) catSum[apps_category(a)] += ab[a]; }
+        for (int c = 0; c < CAT_COUNT; c++) cats.add((double)catSum[c]);
+        if (hours && mask && quota_hourly(ci.macStr, hours, mask)) {
+            for (int h = 0; h < 24; h++) { JsonArray row = hs.add<JsonArray>(); for (int c = 0; c < CAT_COUNT; c++) row.add(hours[h][c]); }
+        }
+        free(ab); free(hours); free(mask);
+        String out;
+        serializeJson(doc, out);
+        sendJson(req, 200, out);
+    });
+    server.on("/api/my/ack", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!req->hasHeader("X-Requested-With")) { req->send(403, "text/plain", "missing X-Requested-With header"); return; }
+        quota_ackNotice((uint32_t)req->client()->remoteIP());
+        req->send(200, "text/plain", "ok");
+    });
+    server.on("/api/notify", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!guard(req, true)) return;
+        quota_setNoticeEnabled(param(req, "on") == "1");
+        req->send(200, "text/plain", "ok");
+    });
 
     // ---- login / logout ----
     server.on("/api/login", HTTP_POST, [](AsyncWebServerRequest *req) {
@@ -586,6 +679,9 @@ void webServer_init() {
             if (!isAuthed(req)) { sendJson(req, 401, "{\"error\":\"login\"}"); return; }
             if (!otaOk || otaError.length()) {
                 String msg = otaError.length() ? otaError : String("no file received");
+                // A failed dashboard update leaves the files half written and unmounted: restart so the
+                // board mounts them again (or shows the repair page) instead of staying in between.
+                if (req->hasParam("type") && req->getParam("type")->value() == "ui") { restartPending = true; restartAt = millis() + 2500; }
                 msg.replace("\\", "\\\\"); msg.replace("\"", "'");
                 sendJson(req, 400, String("{\"error\":\"") + msg + "\"}");
                 return;
@@ -610,6 +706,14 @@ void webServer_init() {
                 otaOk = ota_end(ui, otaError);
             }
         });
+
+    // ---- forget a device that is not connected (a stale or unwanted entry) ----
+    server.on("/api/forget", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!guard(req, true)) return;
+        String mac = param(req, "mac");
+        if (!quota_forget(mac.c_str())) { req->send(409, "text/plain", "device not found, or it is connected right now"); return; }
+        req->send(200, "text/plain", "ok");
+    });
 
     // ---- "internet off" for everybody (trusted devices keep theirs) ----
     server.on("/api/internet", HTTP_POST, [](AsyncWebServerRequest *req) {
@@ -687,6 +791,7 @@ void webServer_init() {
     // ---- memory and flash ----
     server.on("/api/sysinfo", HTTP_GET, [](AsyncWebServerRequest *req) {
         if (!guard(req, false)) return;
+        if (ota_busy()) { req->send(503, "text/plain", "update in progress"); return; }
         SysInfo si;
         sysinfo_get(si);
         JsonDocument doc;
@@ -767,7 +872,12 @@ void webServer_init() {
         req->send(200, "text/plain", "ok");
     });
 
-    server.onNotFound([](AsyncWebServerRequest *req) { req->send(404, "text/plain", "not found"); });
+    // Anything addressed to another host (a paused user's browser, a phone's "is there a login page?"
+    // probe such as /generate_204) is sent to the usage page, which explains what is going on.
+    server.onNotFound([](AsyncWebServerRequest *req) {
+        if (foreignHost(req)) { redirectToUsage(req); return; }
+        req->send(404, "text/plain", "not found");
+    });
 
     server.begin();
     Serial.println("[WEB] server started");

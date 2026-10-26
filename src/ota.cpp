@@ -1,6 +1,7 @@
 #include "ota.h"
 #include "config.h"
 #include <Update.h>
+#include <SPIFFS.h>
 #include <Preferences.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -58,6 +59,9 @@ bool ota_begin(bool ui, String &err) {
     ota_abort();                                         // a previous upload may have been cut off
     firstChunk = true;
     uiMode = ui;
+    // The dashboard files are about to be overwritten. Nothing may read them meanwhile, so unmount
+    // first (a web page reading them half-way through the erase could crash the board).
+    if (ui) SPIFFS.end();
     if (!Update.begin(UPDATE_SIZE_UNKNOWN, ui ? U_SPIFFS : U_FLASH)) {
         err = String("cannot start the update: ") + Update.errorString();
         return false;
@@ -65,6 +69,8 @@ bool ota_begin(bool ui, String &err) {
     Serial.printf("[OTA] receiving %s\n", ui ? "dashboard files" : "firmware");
     return true;
 }
+
+bool ota_busy() { return Update.isRunning(); }
 
 bool ota_write(const uint8_t *data, size_t len, String &err) {
     if (firstChunk) {

@@ -96,7 +96,7 @@ bool dns_learnFromReply(const uint8_t *r, int len, uint8_t questionApp, DnsLearn
     return true;
 }
 
-int dns_buildBlocked(const uint8_t *q, int len, uint8_t *out, int cap) {
+int dns_buildAnswerA(const uint8_t *q, int len, uint8_t *out, int cap, const uint8_t ip[4], uint32_t ttl) {
     if (len < 17 || cap < len + 16) return 0;
     if ((q[2] & 0x80) != 0) return 0;                        // a response, not a query
     if (((q[2] >> 3) & 0x0F) != 0) return 0;                 // only standard queries
@@ -114,7 +114,9 @@ int dns_buildBlocked(const uint8_t *q, int len, uint8_t *out, int cap) {
     out[8] = out[9] = out[10] = out[11] = 0;                 // no authority / extra
     int o = qEnd;
     if (qtype == 1) {
-        static const uint8_t ans[] = { 0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x04, 0, 0, 0, 0 };
+        uint8_t ans[16] = { 0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0x00, 0x04, 0, 0, 0, 0 };
+        ans[6] = (uint8_t)(ttl >> 24); ans[7] = (uint8_t)(ttl >> 16); ans[8] = (uint8_t)(ttl >> 8); ans[9] = (uint8_t)ttl;
+        memcpy(ans + 12, ip, 4);
         memcpy(out + o, ans, sizeof(ans));
         o += sizeof(ans);
     }
@@ -139,4 +141,22 @@ void dns_baseDomain(const char *name, char *out, int outSize) {
     if (l >= outSize) l = outSize - 1;
     memcpy(out, name + start, l);
     out[l] = '\0';
+}
+
+int dns_buildBlocked(const uint8_t *q, int len, uint8_t *out, int cap) {
+    static const uint8_t zero[4] = { 0, 0, 0, 0 };
+    return dns_buildAnswerA(q, len, out, cap, zero, 300);
+}
+
+bool dns_isConnectivityCheck(const char *name) {
+    static const char *const list[] = {
+        "connectivitycheck.gstatic.com", "connectivitycheck.android.com", "clients3.google.com", "clients1.google.com",
+        "captive.apple.com", "msftconnecttest.com", "msftncsi.com", "detectportal.firefox.com", "nmcheck.gnome.org",
+    };
+    size_t n = strlen(name);
+    for (size_t i = 0; i < sizeof(list) / sizeof(list[0]); i++) {
+        size_t l = strlen(list[i]);
+        if (n >= l && strcmp(name + n - l, list[i]) == 0 && (n == l || name[n - l - 1] == '.')) return true;
+    }
+    return false;
 }

@@ -48,7 +48,8 @@ static uint32_t hourApp  [MAX_TRACKED_DEVICES][APP_COUNT];
 static uint32_t appHours [MAX_TRACKED_DEVICES][APP_COUNT];
 static volatile int8_t curHour    = -1;     // local hour 0..23, -1 until the clock is set
 static volatile bool   hourDirty  = false;
-static volatile bool   wanOff     = false;  // "internet off" for everybody (like unplugging the WAN)
+static volatile bool   wanOff     = false;
+static volatile bool   noticeOn   = true;   // tell users at 80%  // "internet off" for everybody (like unplugging the WAN)
 
 static volatile bool useDirty    = false;   // counters changed since the last save
 static volatile bool useSaveNow  = false;   // save the counters at once (block, midnight)
@@ -57,6 +58,7 @@ static int32_t       lastResetKey = -1;     // year*1000 + yday of the last rese
 static bool          hooksOk      = false;
 static uint8_t       nextUserNo   = 1;
 static uint32_t      apIpNet      = 0;      // our own address: traffic to it is never limited
+static uint8_t       ownMac[2][6];             // this board's AP and station addresses: never a "user"
 
 static netif_input_fn      origInput      = nullptr;
 static netif_linkoutput_fn origLinkOutput = nullptr;
@@ -153,6 +155,7 @@ static inline uint32_t rateBytesPerSec(uint32_t kbps, uint32_t defKbps) {
 static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool upload) {
     const uint8_t *mac = upload ? frame + 6 : frame;
     if (mac[0] & 0x01) return false;               // broadcast / multicast
+    if (memcmp(mac, ownMac[0], 6) == 0 || memcmp(mac, ownMac[1], 6) == 0) return false;   // our own radio is not a user
 
     // The remote address decides the app. Offsets: 12 ethertype, 14 IPv4 header, +12 src, +16 dst.
     uint32_t localIp = 0, remoteIp = 0;
@@ -177,7 +180,7 @@ static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool uplo
         d.lastSeenMs = millis();
         if (isIp4 && localIp != 0) d.ip = localIp;
 
-        if ((d.blocked || (wanOff && !toSelf)) && !d.whitelisted) {
+        if (!d.whitelisted && !toSelf && (d.blocked || wanOff)) {          // the repeater itself stays reachable: it shows the notice
             drop = true;
         } else {
             if (!d.whitelisted && !toSelf) {
@@ -209,6 +212,13 @@ static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool uplo
                     uint32_t v = hourApp[i][app] + len;
                     hourApp[i][app] = v < len ? 0xFFFFFFFFu : v;
                     hourDirty = true;
+                }
+                if (noticeOn && !d.warnSent && !d.whitelisted && !d.quotaOverride && d.dailyLimitMB > 0 &&
+                    d.bytesToday * 100ULL >= (uint64_t)d.dailyLimitMB * 1048576ULL * QUOTA_WARN_PERCENT) {
+                    d.warnSent    = true;
+                    d.warnPending = true;
+                    d.warnSince   = millis();
+                    d.kickPending = true;       // a quick reconnect makes the phone look for a login page, which shows the notice
                 }
                 if (!d.whitelisted && !d.quotaOverride && d.dailyLimitMB > 0 &&
                     d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL) {
@@ -519,6 +529,13 @@ static int32_t loadFromNvs() {
     }
 
     wanOff = p.getBool("wan_off", false);
+    noticeOn = p.getBool("notice_on", true);
+    portENTER_CRITICAL(&mux);                       // a reboot must not repeat notices already given today
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++)
+        if (devices[i].active && devices[i].dailyLimitMB > 0 &&
+            devices[i].bytesToday * 100ULL >= (uint64_t)devices[i].dailyLimitMB * 1048576ULL * QUOTA_WARN_PERCENT)
+            devices[i].warnSent = true;
+    portEXIT_CRITICAL(&mux);
 
     portENTER_CRITICAL(&mux);
     speed.globalDownKbps  = p.getULong("g_dn", 0);
@@ -541,6 +558,8 @@ void quota_init() {
     memset(appHours, 0, sizeof(appHours));
     lastResetKey = loadFromNvs();
     apIpNet = (uint32_t)WiFi.softAPIP();
+    WiFi.softAPmacAddress(ownMac[0]);
+    WiFi.macAddress(ownMac[1]);
     WiFi.onEvent(onWifiEvent);
     installHooks();
 }
@@ -735,6 +754,7 @@ bool quota_setLimit(const char *macStr, uint32_t mb) {
     return withDevice(macStr, [&](DeviceUsage &d) {
         d.dailyLimitMB  = mb;
         d.quotaOverride = false;
+        d.warnSent = d.warnPending = false;       // a new limit starts the 80% check again
         // Raising the limit above current usage lifts an automatic block.
         if (mb == 0 || d.bytesToday < (uint64_t)mb * 1048576ULL) d.blocked = false;
     });
@@ -830,6 +850,7 @@ void quota_resetDaily() {
         devices[i].bytesToday    = 0;
         devices[i].blocked       = false;
         devices[i].quotaOverride = false;
+        devices[i].warnSent = devices[i].warnPending = false;
         memset(appBytes[i], 0, sizeof(appBytes[i]));
         memset(hourUnits[i], 0, sizeof(hourUnits[i]));
         memset(hourRem[i], 0, sizeof(hourRem[i]));
@@ -852,4 +873,93 @@ bool quota_isTrustedIp(uint32_t ip) {
         if (devices[i].active && devices[i].ip == ip) { trusted = devices[i].whitelisted; break; }
     portEXIT_CRITICAL(&mux);
     return trusted;
+}
+
+// ---- notices ---------------------------------------------------------------------------------
+
+bool quota_clientInfo(uint32_t ip, ClientInfo &o) {
+    memset(&o, 0, sizeof(o));
+    if (ip == 0) return false;
+    bool found = false;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+        if (!devices[i].active || devices[i].ip != ip) continue;
+        const DeviceUsage &d = devices[i];
+        found = true;
+        memcpy(o.name, d.name, sizeof(o.name));
+        o.userNo = d.userNo;
+        memcpy(o.macStr, d.macStr, sizeof(o.macStr));
+        o.bytesToday = d.bytesToday;
+        o.limitMB    = d.dailyLimitMB;
+        o.downKbps   = d.downKbps == SPEED_DEFAULT ? speed.defaultDownKbps : d.downKbps;
+        o.upKbps     = d.upKbps   == SPEED_DEFAULT ? speed.defaultUpKbps   : d.upKbps;
+        o.blocked    = d.blocked;
+        o.quotaHit   = d.blocked && d.dailyLimitMB > 0 && !d.quotaOverride &&
+                       d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL;
+        o.whitelisted = d.whitelisted;
+        o.warnPending = d.warnPending;
+        break;
+    }
+    portEXIT_CRITICAL(&mux);
+    return found;
+}
+
+void quota_ackNotice(uint32_t ip) {
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++)
+        if (devices[i].active && devices[i].ip == ip) { devices[i].warnPending = false; break; }
+    portEXIT_CRITICAL(&mux);
+}
+
+bool quota_wantsNotice(uint32_t ip, bool isCheck) {
+    if (ip == 0) return false;
+    bool yes = false;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+        if (!devices[i].active || devices[i].ip != ip) continue;
+        DeviceUsage &d = devices[i];
+        if (d.whitelisted) break;
+        if (d.blocked || wanOff) { yes = true; break; }
+        if (d.warnPending && (millis() - d.warnSince) > NOTICE_PENDING_MS) d.warnPending = false;   // nobody looked: stop offering
+        if (d.warnPending && isCheck) yes = true;
+        break;
+    }
+    portEXIT_CRITICAL(&mux);
+    return yes;
+}
+
+bool quota_noticeEnabled() { return noticeOn; }
+
+void quota_setNoticeEnabled(bool on) {
+    noticeOn = on;
+    Preferences p;
+    p.begin(NVS_QUOTA_NAMESPACE, false);
+    p.putBool("notice_on", on);
+    p.end();
+}
+
+bool quota_forget(const char *macStr) {
+    uint8_t mac[6];
+    if (!parseMac(macStr, mac)) return false;
+    wifi_sta_list_t stations;
+    memset(&stations, 0, sizeof(stations));
+    if (esp_wifi_ap_get_sta_list(&stations) != ESP_OK) stations.num = 0;
+    for (int s = 0; s < stations.num; s++) if (memcmp(stations.sta[s].mac, mac, 6) == 0) return false;   // connected now
+    bool found = false;
+    portENTER_CRITICAL(&mux);
+    int i = findSlotLocked(mac);
+    if (i >= 0) {
+        memset(&devices[i], 0, sizeof(DeviceUsage));
+        memset(appBytes[i], 0, sizeof(appBytes[i]));
+        memset(hourUnits[i], 0, sizeof(hourUnits[i]));
+        memset(hourRem[i], 0, sizeof(hourRem[i]));
+        memset(hourApp[i], 0, sizeof(hourApp[i]));
+        memset(appHours[i], 0, sizeof(appHours[i]));
+        found = true;
+        cfgDirty = true;
+        useDirty = true;
+        hourDirty = true;
+    }
+    portEXIT_CRITICAL(&mux);
+    return found;
 }

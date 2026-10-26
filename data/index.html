@@ -128,7 +128,7 @@ nav.bottom{display:none}
     <label class="row" style="margin-top:14px"><input type="checkbox" id="dWhite" style="width:auto"><span data-t="whitelist"></span></label>
     <div class="msg" id="dMsg"></div>
     <div class="row between wrap" style="margin-top:6px">
-      <button type="button" class="btn" id="dBlock"></button>
+      <span class="row" style="gap:6px"><button type="button" class="btn" id="dBlock"></button><button type="button" class="btn danger" id="dForget" data-t="forget"></button></span>
       <span class="row"><button type="button" class="btn" id="dCancel" data-t="cancel"></button><button type="button" class="btn primary" id="dSave" data-t="save"></button></span>
     </div>
   </form>
@@ -184,6 +184,8 @@ const I18N = {
   radioHint:'Maximum reaches furthest. If the board restarts by itself on a weak USB charger or cable, lower it. Best range: put the repeater between the router and the devices, in the open and high up, and add an external antenna if your board has a connector.',
   saveFail:'Saving to flash failed {n} time(s). Free some space (System > Memory) or restart.',lowMemWarn:'Memory is very low. Some pages may be slow.',
   blockAction:'Block this',blockedTag:'blocked',
+  forget:'Forget',forgetAsk:'Remove this device and its numbers from the repeater?',macs:'Repeater addresses (MAC)',updFailed:'Update failed',connLost:'Connection lost. The board may have restarted; wait 10 seconds and reload.',
+  noticeTitle:'Notices for users',noticeOn:'Tell users when they reach 80% and 100% of their daily limit',noticeHow:'At 80% the phone shows a "sign in to network" style page with the message (the device reconnects once). At 100% the internet pauses and the same page explains why. HTTPS sites cannot be redirected, so the notice appears through the phone\'s own network check or when a plain http:// page is opened.',noticeLink:'Each user can open their own usage page (no login) at:',noticeLang:'The page is available in English, Arabic, French, Spanish, Turkish and Urdu.',
   close:'Close',details:'Details',hourly:'Usage by hour (today)',whenUsed:'When each app was used',topDomains:'Most used sites today (lookups)',noData:'Nothing recorded yet.',peak:'Busiest hour',
   clockWait:'The clock is not set yet, so hourly data starts once the repeater has internet.',
   inetTitle:'Internet',inetOn:'Internet is ON',inetOff:'Internet is OFF for all users',inetBtnOff:'Turn internet off',inetBtnOn:'Turn internet on',inetNote:'Cuts every device off from the internet, like unplugging the WAN cable. This dashboard keeps working, and devices marked trusted are not affected.',
@@ -229,6 +231,8 @@ const I18N = {
   radioHint:'الأقصى يصل لأبعد مدى. إذا أعادت اللوحة التشغيل وحدها مع شاحن أو كابل USB ضعيف فخفّضها. أفضل مدى: ضع الريبيتر بين الراوتر والأجهزة، في مكان مفتوح ومرتفع، وأضف هوائي خارجي إن كانت لوحتك تحتوي على موصل.',
   saveFail:'فشل الحفظ في الفلاش {n} مرة. حرّر مساحة (النظام > الذاكرة) أو أعد التشغيل.',lowMemWarn:'الذاكرة منخفضة جدًا. قد تبطؤ بعض الصفحات.',
   blockAction:'حظر هذا',blockedTag:'محظور',
+  forget:'نسيان',forgetAsk:'حذف هذا الجهاز وأرقامه من الريبيتر؟',macs:'عناوين الريبيتر (MAC)',updFailed:'فشل التحديث',connLost:'انقطع الاتصال. ربما أعادت اللوحة التشغيل؛ انتظر 10 ثوانٍ ثم أعد التحميل.',
+  noticeTitle:'إشعارات المستخدمين',noticeOn:'إبلاغ المستخدم عند بلوغ 80% و100% من حده اليومي',noticeHow:'عند 80% يعرض الهاتف صفحة شبيهة بـ "تسجيل الدخول إلى الشبكة" مع الرسالة (يعيد الجهاز الاتصال مرة واحدة). عند 100% يتوقف الإنترنت وتشرح الصفحة السبب. لا يمكن تحويل مواقع HTTPS، لذلك يظهر الإشعار عبر فحص الشبكة في الهاتف أو عند فتح صفحة http:// عادية.',noticeLink:'يمكن لكل مستخدم فتح صفحة استهلاكه (بدون تسجيل دخول) على:',noticeLang:'الصفحة متوفرة بالعربية والإنجليزية والفرنسية والإسبانية والتركية والأردية.',
   close:'إغلاق',details:'التفاصيل',hourly:'الاستهلاك بالساعة (اليوم)',whenUsed:'متى استُخدم كل تطبيق',topDomains:'أكثر المواقع استخدامًا اليوم (طلبات)',noData:'لم يُسجَّل شيء بعد.',peak:'ساعة الذروة',
   clockWait:'الساعة لم تُضبط بعد، لذلك تبدأ بيانات الساعات عندما يصل الريبيتر للإنترنت.',
   inetTitle:'الإنترنت',inetOn:'الإنترنت يعمل',inetOff:'الإنترنت مقطوع عن كل المستخدمين',inetBtnOff:'إيقاف الإنترنت',inetBtnOn:'تشغيل الإنترنت',inetNote:'يقطع الإنترنت عن كل الأجهزة كأنك فصلت كابل WAN. تبقى هذه اللوحة تعمل ولا يتأثر الجهاز الموثوق.',
@@ -403,7 +407,7 @@ function rUsers(){
       h('div',{class:'row'},
         h('div',{class:'avatar'},d.userNo),
         h('div',{style:'flex:1;min-width:0'},h('div',{class:'name'},userName(d)),
-          h('div',{class:'muted small dom'},(d.ip||d.mac)+' · ',h('span',{class:'dot '+(d.online?'on':'')}),' ',d.online?t('online'):t('offlineU'))),
+          h('div',{class:'muted small dom'},(d.ip?d.ip+' · ':'')+d.mac+' · ',h('span',{class:'dot '+(d.online?'on':'')}),' ',d.online?t('online'):t('offlineU'))),
         h('span',{class:'row',style:'gap:6px'},h('button',{class:'btn sm',type:'button',onclick:()=>openDetail(d.mac)},t('details')),h('button',{class:'btn sm',type:'button',onclick:()=>openDialog(d.mac)},t('rename')))),
       h('div',{class:'row between'},h('span',{class:'muted small'},t('today')),h('b',null,fmtBytes(d.bytesToday))),
       ...catBar(d.cats),
@@ -514,7 +518,13 @@ function rSettings(){
   const ids={};
   const fld=(key,label,type)=>{const i=h('input',{type:type||'text',autocomplete:'off',autocapitalize:'off',spellcheck:'false'});ids[key]=i;return h('div',null,h('label',{class:'f'},label),i)};
   const msg=h('div',{class:'msg'});
-  const wrap=h('div',null,h('div',{class:'card'},
+  const ap=S.status.sys.apIp;
+  const noticeCard=h('div',{class:'card'},h('h2',null,t('noticeTitle')),
+    h('label',{class:'row'},h('input',{type:'checkbox',style:'width:auto',checked:S.status.sys.notify?true:null,onchange:async e=>{const x=await post('/api/notify',{on:e.target.checked?'1':'0'});toast(x.ok?t('saved'):t('failed'));poke()}}),h('span',null,t('noticeOn'))),
+    h('div',{class:'note'},t('noticeHow')),h('div',{class:'note'},t('noticeLink')),
+    h('div',{class:'dom',style:'direction:ltr;margin-top:4px'},h('b',null,'http://'+ap+'/my_usage'),h('div',{class:'muted small'},'http://usage.lan  ·  http://my.usage  ·  http://'+ap+'/#my_usage')),
+    h('div',{class:'note'},t('noticeLang')));
+  const wrap=h('div',null,noticeCard,h('div',{class:'card'},
     h('h2',null,t('wifi')),
     h('div',{class:'two'},fld('sta_ssid',t('staSsid')),fld('sta_password',t('staPass'),'password'),fld('ap_ssid',t('apSsid')),fld('ap_password',t('apPass'),'password')),
     h('h2',{style:'margin-top:18px'},t('adminPass')),fld('admin_password',t('adminPass'),'password'),
@@ -548,7 +558,7 @@ function rSystem(){
   return h('div',null,
    h('div',{class:'card'},h('table',null,
      row(t('version'),sys.version),row(t('uptime'),fmtUp(sys.uptime)),row(t('freeMem'),fmtBytes(sys.heap)),
-     row(t('homeWifi'),sys.staSsid+(sys.upstream?' ('+sys.staIp+')':'')),row(t('repeater'),sys.apSsid+' ('+sys.apIp+')'),row(t('channel'),sys.channel))),
+     row(t('homeWifi'),sys.staSsid+(sys.upstream?' ('+sys.staIp+')':'')),row(t('macs'),h('span',{class:'dom small'},'AP '+sys.apMac+'  ·  STA '+sys.staMac)),row(t('repeater'),sys.apSsid+' ('+sys.apIp+')'),row(t('channel'),sys.channel))),
    h('div',{class:'card'},h('h2',null,t('memory')),h('div',{id:'memBox'},h('div',{class:'empty'},'...'))),
    radioCard(),
    h('div',{class:'card'},h('h2',null,t('ping')),h('div',{class:'row'},pingHost,runPing),pingOut),
@@ -575,14 +585,15 @@ function otaBox(type,label){
     xhr.open('POST','/api/ota?type='+type);
     xhr.setRequestHeader('X-Requested-With','dashboard');
     btn.disabled=true;prog.style.display='';msg.className='msg';msg.textContent=t('uploading');
+    S.busy=true;try{if(live.ws)live.ws.close()}catch(e){}       // keep the board's attention on the upload
     xhr.upload.onprogress=e=>{if(e.lengthComputable)prog.value=e.loaded/e.total*100};
     xhr.onload=()=>{
       let err='';try{err=JSON.parse(xhr.responseText).error||''}catch(e){}
       if(xhr.status===200){msg.className='msg ok';msg.textContent=t('updDone');setTimeout(()=>location.reload(),9000)}
       else if(xhr.status===401){location.replace('/login')}
-      else{msg.className='msg err';msg.textContent=err||t('failed');btn.disabled=false}
+      else{S.busy=false;msg.className='msg err';msg.textContent=t('updFailed')+' ('+xhr.status+'): '+(err||String(xhr.responseText).slice(0,160)||'?');btn.disabled=false}
     };
-    xhr.onerror=()=>{msg.className='msg err';msg.textContent=t('failed');btn.disabled=false};
+    xhr.onerror=()=>{S.busy=false;msg.className='msg err';msg.textContent=t('updFailed')+': '+t('connLost');btn.disabled=false};
     xhr.send(fd);
   }},t('upload'));
   return h('div',null,h('label',{class:'f'},label),h('div',{class:'row wrap'},h('div',{style:'flex:1;min-width:200px'},file),btn),prog,msg);
@@ -760,10 +771,16 @@ function openDialog(mac){
   $('dDown').value=d.down>=0?d.down/1000:'';$('dUp').value=d.up>=0?d.up/1000:'';
   $('dWhite').checked=!!d.whitelisted;
   $('dBlock').textContent=d.blocked?t('unblock'):t('block');
+  $('dForget').style.display=d.online?'none':'';
   $('dMsg').textContent='';$('dMsg').className='msg';
   $('dlg').showModal();
 }
 $('dCancel').onclick=()=>$('dlg').close();
+$('dForget').onclick=async()=>{
+  if(!confirm(t('forgetAsk')))return;
+  const x=await post('/api/forget',{mac:dlgMac});
+  if(x.ok){$('dlg').close();toast(t('saved'));poke()}else{$('dMsg').className='msg err';$('dMsg').textContent=x.text||t('failed')}
+};
 $('dBlock').onclick=async()=>{
   const d=devByMac(dlgMac);if(!d)return;
   const x=await post(d.blocked?'/api/unblock':'/api/block',{mac:dlgMac});
@@ -799,6 +816,7 @@ async function loadApps(){try{S.apps=await (await api('/api/apps')).json()}catch
 async function loadLearn(){try{S.learn=await (await api('/api/learn')).json()}catch(e){}}
 let lastSlow=0;
 async function poke(){
+  if(S.busy)return;
   await loadStatus();
   if(['apps','users'].includes(S.page)){await loadApps();if(S.page==='apps')await loadLearn();renderPage(false)}
   if(S.page==='overview')loadOverviewChart();
@@ -815,7 +833,7 @@ function openWs(){
   }catch(e){}
 }
 async function tick(){
-  if(document.hidden)return;
+  if(document.hidden||S.busy)return;
   if(!live.ws||live.ws.readyState!==1){await loadStatus();if(!live.ws)openWs()}
   if(Date.now()-lastSlow>5000&&['apps','users'].includes(S.page)){
     lastSlow=Date.now();await loadApps();if(S.page==='apps')await loadLearn();renderPage(false);
@@ -827,6 +845,7 @@ async function tick(){
 
 /* ---------- start ---------- */
 (async function init(){
+  if(location.hash==='#my_usage'||location.hash==='#usage'){location.replace('/my_usage');return}
   const hash=location.hash.slice(1);if(PAGES.some(p=>p[0]===hash))S.page=hash;
   document.querySelectorAll('[data-t]').forEach(e=>{e.textContent=t(e.dataset.t)});
   document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';

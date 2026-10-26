@@ -269,6 +269,24 @@ static void testBaseDomain() {
     dns_baseDomain("www.example.com", tiny, sizeof(tiny));           CHECK(strlen(tiny) <= 5);
 }
 
+static void testNotice() {
+    CHECK(dns_isConnectivityCheck("connectivitycheck.gstatic.com"));
+    CHECK(dns_isConnectivityCheck("captive.apple.com"));
+    CHECK(dns_isConnectivityCheck("www.msftconnecttest.com"));
+    CHECK(!dns_isConnectivityCheck("www.gstatic.com"));
+    CHECK(!dns_isConnectivityCheck("notcaptive.apple.com.evil.com"));
+    CHECK(!dns_isConnectivityCheck("xcaptive.apple.com"));
+    std::vector<uint8_t> q = makeQuery("connectivitycheck.gstatic.com");
+    uint8_t out[512];
+    const uint8_t ap[4] = {192, 168, 4, 1};
+    int n = dns_buildAnswerA(q.data(), (int)q.size(), out, sizeof(out), ap, 5);
+    CHECK(n == (int)q.size() + 16);
+    CHECK(out[7] == 1 && (out[2] & 0x80) && (out[3] & 0x0F) == 0);
+    CHECK(out[n - 4] == 192 && out[n - 3] == 168 && out[n - 2] == 4 && out[n - 1] == 1);
+    CHECK(out[n - 10] == 0 && out[n - 9] == 0 && out[n - 8] == 0 && out[n - 7] == 5);      // TTL 5
+    CHECK(dns_buildAnswerA(q.data(), (int)q.size(), out, 10, ap, 5) == 0);
+}
+
 // ---- ad blocking -------------------------------------------------------------------------
 static AdVerdict verdictOf(const char *d, const UserLists &u, bool on = true) {
     return adblock_verdict(d, u, on, BLOCKLIST_DATA, BLOCKLIST_BYTES);
@@ -430,6 +448,7 @@ int main() {
     testShaper();
     testSeenOnPhones();
     testBaseDomain();
+    testNotice();
     testBlocklist();
     testHosts();
     testSetRule();
