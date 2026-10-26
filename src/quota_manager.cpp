@@ -315,6 +315,7 @@ static volatile uint32_t saveFailures = 0;     // writes that did not reach flas
 static uint32_t          lastCfgTry   = 0;
 uint32_t quota_saveFailures() { return saveFailures; }
 
+static void saveAppBlocks();
 static void saveCfg() {
     lastCfgTry = millis();
     CfgRec *recs = (CfgRec *)calloc(MAX_TRACKED_DEVICES, sizeof(CfgRec));
