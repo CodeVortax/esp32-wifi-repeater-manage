@@ -2,6 +2,13 @@
 
 Versions follow `FW_VERSION` in `include/config.h`. All releases are betas.
 
+## Unreleased
+- **Adult filter ("kill porn")**: built-in list of 118,887 names (330 KB, in flash) plus keyword and domain-ending rules. Optional lock: once locked there is no off switch in the dashboard or the API; only a factory reset (hold BOOT) or a re-flash removes it, and no Allow rule can lift it.
+- **Kill an app for one user** (YouTube, TikTok, Facebook, ...): its names are answered with nothing and its traffic is dropped. Set in the user's Edit dialog; the user sees it on their usage page.
+- **Usage notices**: a notice at 80% of the daily limit and at the limit; users open `http://usage.lan` (or `/my_usage`) to see their own usage in 6 languages. `usage.lan` now always opens the user page, never the admin login.
+- Dashboard updates: the page stops polling while uploading and shows the real error; the board unmounts its files first and restarts itself if a dashboard update fails.
+- The board's own radio addresses are never listed as a user; a "Forget" button removes an offline device.
+
 ## 0.4.0-beta
 
 ### Added

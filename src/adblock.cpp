@@ -216,9 +216,37 @@ static bool inSorted(const uint32_t *a, uint16_t n, uint32_t h) {
     return n && std::binary_search(a, a + n, h);
 }
 
-AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, const uint8_t *data, size_t len) {
+// Keep the TLD list in sync with scripts/pick_adult.py.
+static bool adultKeyword(const char *d, size_t n) {
+    static const char *const tld[] = { "xxx", "porn", "adult", "sex" };
+    static const char *const kw[]  = { "porn", "hentai", "xvideo", "xnxx", "xhamster", "redtube", "brazzers", "bangbros" };
+    const char *dot = strrchr(d, '.');
+    const char *t = dot ? dot + 1 : d;
+    for (const char *x : tld) if (strcmp(t, x) == 0) return true;
+    for (const char *x : kw) if (strstr(d, x)) return true;
+    (void)n;
+    return false;
+}
+
+bool adult_match(const char *domain, const uint8_t *data, size_t len) {
+    size_t n = strlen(domain);
+    if (n < 3 || n > 253) return false;
+    if (adultKeyword(domain, n)) return true;
+    for (size_t i = 0; i < n; i++) {
+        if (i > 0 && domain[i - 1] != '.') continue;
+        const char *s = domain + i;
+        if (strchr(s, '.') == nullptr) break;
+        if (blocklist_contains(data, len, adblock_hash64(s, n - i))) return true;
+    }
+    return false;
+}
+
+AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, const uint8_t *data, size_t len,
+                          const AdultCfg *adult) {
     size_t n = strlen(domain);
     if (n < 3 || n > 253) return AB_PASS;
+    const bool adultOn = adult && adult->on;
+    if (adultOn && adult->locked && adult_match(domain, adult->data, adult->len)) return AB_ADULT;   // no allow rule beats a locked filter
     // Walk the name and every parent that still has two labels: a.b.c -> b.c
     AdVerdict result = AB_PASS;
     for (size_t i = 0; i < n; i++) {
@@ -231,8 +259,10 @@ AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, c
         if (result == AB_PASS) {
             if (inSorted(u.block, u.nBlock, h32)) result = AB_USER;
             else if (listOn && blocklist_contains(data, len, h)) result = AB_LIST;
+            else if (adultOn && blocklist_contains(adult->data, adult->len, h)) result = AB_ADULT;
         }
     }
+    if (result == AB_PASS && adultOn && adultKeyword(domain, n)) result = AB_ADULT;      // reached only when nothing allowed it
     return result;
 }
 
@@ -240,6 +270,7 @@ AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, c
 #ifdef ARDUINO
 #include "config.h"
 #include "blocklist_data.h"
+#include "adult_data.h"
 #include <Preferences.h>
 #include <nvs.h>
 
@@ -251,6 +282,7 @@ AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, c
 
 static UserLists          lists;
 static bool               listOn = true;
+static bool               adultOn = false, adultLocked = false;
 static SemaphoreHandle_t  lock = nullptr;
 static uint32_t           blockedTotal = 0;
 static uint32_t           fileBytes = 0;
@@ -286,6 +318,8 @@ void adblock_init() {
     Preferences p;
     p.begin(NVS_NS, false);
     listOn = p.getBool("on", true);
+    adultOn = p.getBool("adult", false);
+    adultLocked = adultOn && p.getBool("adultlock", false);
     p.end();
     HostsStats st;
     reload(st);
@@ -306,9 +340,29 @@ void adblock_setEnabled(bool on) {
 AdVerdict adblock_check(const char *domain) {
     if (!lock) return AB_PASS;
     xSemaphoreTake(lock, portMAX_DELAY);
-    AdVerdict v = adblock_verdict(domain, lists, listOn, BLOCKLIST_DATA, BLOCKLIST_BYTES);
+    AdultCfg ac = { adultOn, adultLocked, ADULTLIST_DATA, ADULTLIST_BYTES };
+    AdVerdict v = adblock_verdict(domain, lists, listOn, BLOCKLIST_DATA, BLOCKLIST_BYTES, &ac);
     xSemaphoreGive(lock);
     return v;
+}
+
+bool adblock_adultOn() { return adultOn; }
+
+// "Kill porn": switch it on, optionally locked. A locked filter has no off switch anywhere in the
+// dashboard or the API: only a factory reset (hold BOOT) or a re-flash clears it.
+bool adblock_setAdult(bool on, bool lock, String &err) {
+    if (adultLocked) {
+        if (!on) { err = "The adult filter is locked. Only a factory reset or a re-flash turns it off."; return false; }
+        return true;
+    }
+    adultOn = on;
+    adultLocked = on && lock;
+    Preferences p;
+    p.begin(NVS_NS, false);
+    p.putBool("adult", adultOn);
+    p.putBool("adultlock", adultLocked);
+    p.end();
+    return true;
 }
 
 void adblock_noteBlocked(uint32_t ip, const char *domain, AdVerdict v) {
@@ -344,6 +398,8 @@ uint32_t adblock_blockedFor(uint32_t ip) {
 void adblock_info(AdblockInfo &o) {
     o.enabled = listOn;
     o.listNames = blocklist_count(BLOCKLIST_DATA, BLOCKLIST_BYTES);
+    o.adultNames = blocklist_count(ADULTLIST_DATA, ADULTLIST_BYTES);
+    o.adultOn = adultOn; o.adultLocked = adultLocked;
     xSemaphoreTake(lock, portMAX_DELAY);
     o.userBlocks = lists.nBlock; o.userAllows = lists.nAllow;
     xSemaphoreGive(lock);

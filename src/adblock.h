@@ -22,7 +22,7 @@
   #define HOSTS_FILE_MAX  12288
 #endif
 
-enum AdVerdict : uint8_t { AB_PASS = 0, AB_USER = 1, AB_LIST = 2 };
+enum AdVerdict : uint8_t { AB_PASS = 0, AB_USER = 1, AB_LIST = 2, AB_ADULT = 3, AB_APP = 4 };
 
 uint64_t adblock_hash64(const char *s, size_t n);               // FNV-1a over the lower-case name
 
@@ -48,8 +48,14 @@ size_t hosts_setRule(const char *text, size_t len, const char *domain, char mode
 
 bool adblock_validHost(const char *name);                       // letters, digits, '-', '_', '.', at least one dot
 
+// The adult filter: a second built-in list (src/adult_data.h) plus a few keywords / domain endings
+// that catch the long tail. Once `locked`, the Allow list cannot lift it.
+struct AdultCfg { bool on; bool locked; const uint8_t *data; size_t len; };
+bool adult_match(const char *domain, const uint8_t *data, size_t len);
+
 // Is this name blocked? listOn switches the built-in list.
-AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, const uint8_t *data, size_t len);
+AdVerdict adblock_verdict(const char *domain, const UserLists &u, bool listOn, const uint8_t *data, size_t len,
+                          const AdultCfg *adult = nullptr);
 
 // ---- Arduino part ----
 #ifdef ARDUINO
@@ -62,6 +68,8 @@ struct AdblockInfo {
     uint16_t userBlocks, userAllows;
     uint32_t blockedTotal;    // since the last restart
     uint32_t fileBytes;
+    uint32_t adultNames;      // names in the adult list
+    bool     adultOn, adultLocked;
 };
 
 void     adblock_init();                           // loads the flag and the hosts file
@@ -75,5 +83,7 @@ uint32_t adblock_blockedFor(uint32_t clientIp);
 String   adblock_readFile();
 uint32_t adblock_nvsFree();                         // bytes of NVS still free
 bool     adblock_saveFile(const String &text, String &err, HostsStats &st);
+bool     adblock_setAdult(bool on, bool lock, String &err);   // a locked filter cannot be turned off
+bool     adblock_adultOn();
 bool     adblock_setRule(const char *domain, char mode, String &err);   // 'b', 'a' or 'r'
 #endif

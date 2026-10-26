@@ -4,6 +4,7 @@
 #include "shaper.h"
 #include "adblock.h"
 #include "blocklist_data.h"
+#include "adult_data.h"
 #include <fstream>
 #include <random>
 #include <cstdio>
@@ -269,6 +270,57 @@ static void testBaseDomain() {
     dns_baseDomain("www.example.com", tiny, sizeof(tiny));           CHECK(strlen(tiny) <= 5);
 }
 
+
+static void testAdult() {
+    UserLists none;
+    // every name the generator wrote must be found (Python encoder vs C++ decoder)
+    std::ifstream f("../blocklist/adult/names.txt");
+    std::string line; int total = 0, missing = 0;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        total++;
+        if (!blocklist_contains(ADULTLIST_DATA, ADULTLIST_BYTES, adblock_hash64(line.data(), line.size()))) missing++;
+    }
+    printf("  adult list: %d names in %zu bytes (%.2f B/name), %d missing\n", total, (size_t)ADULTLIST_BYTES, (double)ADULTLIST_BYTES / total, missing);
+    CHECK(total > 50000);
+    CHECK(missing == 0);
+    CHECK(ADULTLIST_BYTES < 340000);
+
+    std::string first, mid, last;                                   // a listed name, a sub-domain of it
+    { std::ifstream g("../blocklist/adult/names.txt"); std::getline(g, first); }
+    AdultCfg off = { false, false, ADULTLIST_DATA, ADULTLIST_BYTES };
+    AdultCfg on  = { true,  false, ADULTLIST_DATA, ADULTLIST_BYTES };
+    AdultCfg lk  = { true,  true,  ADULTLIST_DATA, ADULTLIST_BYTES };
+    auto v = [&](const std::string &d, const UserLists &u, const AdultCfg &c) { return adblock_verdict(d.c_str(), u, true, BLOCKLIST_DATA, BLOCKLIST_BYTES, &c); };
+    CHECK(v(first, none, off) == AB_PASS);
+    CHECK(v(first, none, on) == AB_ADULT);
+    CHECK(v("cdn." + first, none, on) == AB_ADULT);                 // sub-domains follow the parent
+    CHECK(v("www.pornhub.com", none, on) == AB_ADULT);              // keyword
+    CHECK(v("anything.xxx", none, on) == AB_ADULT);                 // domain ending
+    CHECK(v("pornhub.com", none, off) == AB_PASS);
+    CHECK(v("xxxlutz.de", none, on) == AB_PASS);                    // "xxx" alone is not a keyword
+    CHECK(v("essex.ac.uk", none, on) == AB_PASS);
+    CHECK(v("google.com", none, on) == AB_PASS);
+    CHECK(v("wikipedia.org", none, on) == AB_PASS);
+    // the Allow list lifts an unlocked filter, but never a locked one
+    UserLists u; HostsStats st;
+    std::string text = "@@" + first + "\n@@pornhub.com\n";
+    CHECK(hosts_parse(text.c_str(), text.size(), u, st));
+    CHECK(v(first, u, on) == AB_PASS);
+    CHECK(v("pornhub.com", u, on) == AB_PASS);
+    CHECK(v(first, u, lk) == AB_ADULT);
+    CHECK(v("pornhub.com", u, lk) == AB_ADULT);
+    hosts_free(u);
+    // false matches against ordinary sites must stay rare
+    std::mt19937 rng(7); int fp = 0;
+    for (int i = 0; i < 200000; i++) {
+        char nm[40]; snprintf(nm, sizeof(nm), "site%u.example%u.com", (unsigned)rng(), (unsigned)(rng() % 97));
+        if (blocklist_contains(ADULTLIST_DATA, ADULTLIST_BYTES, adblock_hash64(nm, strlen(nm)))) fp++;
+    }
+    printf("  adult false matches: %d of 200000\n", fp);
+    CHECK(fp <= 2);
+}
+
 static void testNotice() {
     CHECK(dns_isConnectivityCheck("connectivitycheck.gstatic.com"));
     CHECK(dns_isConnectivityCheck("captive.apple.com"));
@@ -449,6 +501,7 @@ int main() {
     testSeenOnPhones();
     testBaseDomain();
     testNotice();
+    testAdult();
     testBlocklist();
     testHosts();
     testSetRule();

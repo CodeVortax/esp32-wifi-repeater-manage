@@ -126,6 +126,8 @@ nav.bottom{display:none}
     </div>
     <div class="note" data-t="speedBlankHint"></div>
     <label class="row" style="margin-top:14px"><input type="checkbox" id="dWhite" style="width:auto"><span data-t="whitelist"></span></label>
+    <details style="margin-top:12px"><summary data-t="killApps" style="cursor:pointer"></summary>
+      <div class="note" data-t="killHint"></div><div id="dKill"></div></details>
     <div class="msg" id="dMsg"></div>
     <div class="row between wrap" style="margin-top:6px">
       <span class="row" style="gap:6px"><button type="button" class="btn" id="dBlock"></button><button type="button" class="btn danger" id="dForget" data-t="forget"></button></span>
@@ -184,6 +186,9 @@ const I18N = {
   radioHint:'Maximum reaches furthest. If the board restarts by itself on a weak USB charger or cable, lower it. Best range: put the repeater between the router and the devices, in the open and high up, and add an external antenna if your board has a connector.',
   saveFail:'Saving to flash failed {n} time(s). Free some space (System > Memory) or restart.',lowMemWarn:'Memory is very low. Some pages may be slow.',
   blockAction:'Block this',blockedTag:'blocked',
+  adultTitle:'Adult sites',adultOn:'Block adult sites',adultNames:'names in the adult list',adultHow:'Blocks adult websites for every device, using a built-in list plus keywords. Devices that use their own DNS or a VPN can still bypass DNS blocking.',
+  adultLockBtn:'Lock it on',adultLockAsk:'Lock the adult filter ON? After this there is NO way to turn it off from the dashboard. Only a factory reset (hold BOOT for 5 seconds) or re-flashing removes it.',adultLocked:'Adult sites are blocked and the filter is locked. It can only be removed by a factory reset (hold BOOT 5 s) or by re-flashing the board.',
+  killApps:'Block apps for this user',killHint:'A blocked app gets no data at all for this user.',adultV:'adult site',appV:'blocked app',
   forget:'Forget',forgetAsk:'Remove this device and its numbers from the repeater?',macs:'Repeater addresses (MAC)',updFailed:'Update failed',connLost:'Connection lost. The board may have restarted; wait 10 seconds and reload.',
   noticeTitle:'Notices for users',noticeOn:'Tell users when they reach 80% and 100% of their daily limit',noticeHow:'At 80% the phone shows a "sign in to network" style page with the message (the device reconnects once). At 100% the internet pauses and the same page explains why. HTTPS sites cannot be redirected, so the notice appears through the phone\'s own network check or when a plain http:// page is opened.',noticeLink:'Each user can open their own usage page (no login) at:',noticeLang:'The page is available in English, Arabic, French, Spanish, Turkish and Urdu.',
   close:'Close',details:'Details',hourly:'Usage by hour (today)',whenUsed:'When each app was used',topDomains:'Most used sites today (lookups)',noData:'Nothing recorded yet.',peak:'Busiest hour',
@@ -231,6 +236,9 @@ const I18N = {
   radioHint:'الأقصى يصل لأبعد مدى. إذا أعادت اللوحة التشغيل وحدها مع شاحن أو كابل USB ضعيف فخفّضها. أفضل مدى: ضع الريبيتر بين الراوتر والأجهزة، في مكان مفتوح ومرتفع، وأضف هوائي خارجي إن كانت لوحتك تحتوي على موصل.',
   saveFail:'فشل الحفظ في الفلاش {n} مرة. حرّر مساحة (النظام > الذاكرة) أو أعد التشغيل.',lowMemWarn:'الذاكرة منخفضة جدًا. قد تبطؤ بعض الصفحات.',
   blockAction:'حظر هذا',blockedTag:'محظور',
+  adultTitle:'المواقع الإباحية',adultOn:'حظر المواقع الإباحية',adultNames:'اسم في القائمة الإباحية',adultHow:'يحظر المواقع الإباحية لكل الأجهزة بقائمة مدمجة وكلمات مفتاحية. الأجهزة التي تستخدم DNS خاصًا أو VPN قد تتجاوز الحظر.',
+  adultLockBtn:'تثبيت التفعيل',adultLockAsk:'هل تريد تثبيت الحظر؟ بعدها لا توجد طريقة لإيقافه من لوحة التحكم. فقط إعادة ضبط المصنع (اضغط BOOT لمدة 5 ثوانٍ) أو إعادة الفلاش.',adultLocked:'المواقع الإباحية محظورة والفلتر مثبّت. لا يُزال إلا بإعادة ضبط المصنع (BOOT لمدة 5 ثوانٍ) أو بإعادة فلاش اللوحة.',
+  killApps:'حظر تطبيقات لهذا المستخدم',killHint:'التطبيق المحظور لا تصله أي بيانات لهذا المستخدم.',adultV:'موقع إباحي',appV:'تطبيق محظور',
   forget:'نسيان',forgetAsk:'حذف هذا الجهاز وأرقامه من الريبيتر؟',macs:'عناوين الريبيتر (MAC)',updFailed:'فشل التحديث',connLost:'انقطع الاتصال. ربما أعادت اللوحة التشغيل؛ انتظر 10 ثوانٍ ثم أعد التحميل.',
   noticeTitle:'إشعارات المستخدمين',noticeOn:'إبلاغ المستخدم عند بلوغ 80% و100% من حده اليومي',noticeHow:'عند 80% يعرض الهاتف صفحة شبيهة بـ "تسجيل الدخول إلى الشبكة" مع الرسالة (يعيد الجهاز الاتصال مرة واحدة). عند 100% يتوقف الإنترنت وتشرح الصفحة السبب. لا يمكن تحويل مواقع HTTPS، لذلك يظهر الإشعار عبر فحص الشبكة في الهاتف أو عند فتح صفحة http:// عادية.',noticeLink:'يمكن لكل مستخدم فتح صفحة استهلاكه (بدون تسجيل دخول) على:',noticeLang:'الصفحة متوفرة بالعربية والإنجليزية والفرنسية والإسبانية والتركية والأردية.',
   close:'إغلاق',details:'التفاصيل',hourly:'الاستهلاك بالساعة (اليوم)',whenUsed:'متى استُخدم كل تطبيق',topDomains:'أكثر المواقع استخدامًا اليوم (طلبات)',noData:'لم يُسجَّل شيء بعد.',peak:'ساعة الذروة',
@@ -632,6 +640,7 @@ function rBlock(){
   return h('div',null,
     h('div',{class:'card'},h('h2',null,t('adsTitle')),
       h('label',{class:'row'},sw,h('span',null,t('adsOn'))),stats,h('div',{class:'note'},t('adsHow'))),
+    h('div',{class:'card',id:'adultCard'}),
     h('div',{class:'card'},h('h2',null,t('blockedNow')),h('div',{id:'blkRecent'},h('div',{class:'empty'},'...'))),
     h('div',{class:'card'},h('h2',null,t('siteBox')),
       h('div',{class:'row'},site,h('button',{class:'btn primary',type:'button',onclick:async()=>{if(await blockRule(site.value,'block'))site.value='';hosts.value=await (await fetch('/api/hosts',{headers:{'X-Requested-With':'dashboard'}})).text();updUsed()}},t('blockSite'))),
@@ -647,8 +656,23 @@ function rBlock(){
           else{hostsMsg.className='msg err';hostsMsg.textContent=x.text||t('failed')}
         }},t('hostsSave')))),hostsMsg));
 }
+let adultSig='';
+function fillAdult(){
+  const A=S.adblock,box=$('adultCard');if(!A||!box)return;
+  const sig=[A.adult,A.adultLocked,A.adultNames,lang].join();
+  if(sig===adultSig&&box.childNodes.length)return;adultSig=sig;
+  const note=h('div',{class:'note'},t('adultHow')+' · '+A.adultNames+' '+t('adultNames'));
+  if(A.adultLocked){box.replaceChildren(h('h2',null,t('adultTitle')),h('div',{class:'msg ok'},t('adultLocked')));return}
+  const sw=h('input',{type:'checkbox',style:'width:auto',checked:!!A.adult,onchange:async e=>{
+    const x=await post('/api/adult',{on:e.target.checked?'1':'0',lock:'0'});toast(x.ok?t('saved'):(x.text||t('failed')));await loadAdblock();adultSig='';fillAdult()}});
+  const lockBtn=A.adult?h('button',{class:'btn danger',type:'button',onclick:async()=>{
+    if(!confirm(t('adultLockAsk')))return;
+    const x=await post('/api/adult',{on:'1',lock:'1'});toast(x.ok?t('saved'):(x.text||t('failed')));await loadAdblock();adultSig='';fillAdult()}},t('adultLockBtn')):null;
+  box.replaceChildren(h('h2',null,t('adultTitle')),h('div',{class:'row between wrap'},h('label',{class:'row'},sw,h('span',null,t('adultOn'))),lockBtn),note);
+}
 function fillBlockLive(){
   const A=S.adblock;if(!A)return;
+  fillAdult();
   const sw=$('adSwitch');if(sw&&document.activeElement!==sw)sw.checked=!!A.enabled;
   const st=$('blkStats');
   if(st){st.replaceChildren(
@@ -658,7 +682,7 @@ function fillBlockLive(){
   const box=$('blkRecent');
   if(box){box.replaceChildren(A.recent.length?h('table',null,...A.recent.map(r=>h('tr',null,
     h('td',{class:'dom'},r.domain),h('td',{class:'n small muted'},'×'+r.count),
-    h('td',null,h('span',{class:'tag'+(r.v===1?' red':'')},r.v===1?t('yourList'):t('adList'))),
+    h('td',null,h('span',{class:'tag'+(r.v===1||r.v===3?' red':'')},r.v===1?t('yourList'):r.v===3?t('adultV'):t('adList'))),
     h('td',{class:'muted small'},r.who),
     h('td',{style:'text-align:end'},r.v===1
       ?h('button',{class:'btn sm',type:'button',onclick:()=>blockRule(r.domain,'remove')},t('unblockRule'))
@@ -772,8 +796,24 @@ function openDialog(mac){
   $('dWhite').checked=!!d.whitelisted;
   $('dBlock').textContent=d.blocked?t('unblock'):t('block');
   $('dForget').style.display=d.online?'none':'';
+  fillKill(d);
   $('dMsg').textContent='';$('dMsg').className='msg';
   $('dlg').showModal();
+}
+function fillKill(d){
+  const box=$('dKill');box.replaceChildren();
+  const cat=S.catalog;if(!cat)return;
+  const on=new Set(d.kill||[]);
+  for(let c=0;c<8;c++){
+    const apps=[];cat.apps.forEach((a,i)=>{if(a[1]===c&&a[2])apps.push(i)});
+    if(!apps.length)continue;
+    box.append(h('div',{class:'muted small',style:'margin:10px 0 4px'},catLabel(c)),
+      h('div',{class:'row wrap',style:'gap:6px'},...apps.map(i=>{
+        const cb=h('input',{type:'checkbox',style:'width:auto',checked:on.has(i),onchange:async e=>{
+          const x=await post('/api/appkill',{mac:dlgMac,app:String(i),on:e.target.checked?'1':'0'});
+          if(!x.ok){e.target.checked=!e.target.checked;toast(x.text||t('failed'))}else{toast(t('saved'));poke()}}});
+        return h('label',{class:'tag',style:'cursor:pointer;display:inline-flex;gap:5px;align-items:center'},cb,appName(i))})));
+  }
 }
 $('dCancel').onclick=()=>$('dlg').close();
 $('dForget').onclick=async()=>{

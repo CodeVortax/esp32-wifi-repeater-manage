@@ -28,6 +28,7 @@ struct DeviceUsage {
     bool     warnSent;                  // the 80% notice was already triggered today
     bool     warnPending;               // the user has not seen it yet
     uint32_t warnSince;                 // millis() when it was triggered
+    uint64_t appBlock;                  // bit n set = app n is killed for this user (no data reaches it)
     uint32_t lastSeenMs;                // millis() of the last frame
     Bucket   dl, ul;                    // internal: speed limiter state
 };
@@ -77,7 +78,12 @@ void        quota_setSpeedConfig(const SpeedConfig &cfg);
 
 void quota_resetDaily();
 bool quota_hooksInstalled();
-bool quota_forget(const char *macStr);              // remove a device that is not connected
+bool quota_forget(const char *macStr);
+// Kill / restore one app for one user. Refuses apps that cannot be told apart (Google, Other, System, Ads).
+bool quota_setAppBlock(const char *macStr, uint8_t app, bool on);
+uint64_t quota_appBlockMask(const char *macStr);
+bool quota_ipAppBlocked(uint32_t ip, uint8_t app);     // DNS side: is this app killed for the device at `ip`?
+bool quota_appKillable(uint8_t app);              // remove a device that is not connected
 
 // ---- what a user sees about himself (looked up by the address he connects from) ----
 struct ClientInfo {
@@ -91,6 +97,7 @@ struct ClientInfo {
     bool     quotaHit;                  // ... because the daily limit was reached
     bool     whitelisted;
     bool     warnPending;
+    uint64_t appBlock;
 };
 bool quota_clientInfo(uint32_t ip, ClientInfo &out);
 void quota_ackNotice(uint32_t ip);                    // "OK, continue" on the 80% notice

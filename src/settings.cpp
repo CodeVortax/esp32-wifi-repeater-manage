@@ -117,4 +117,9 @@ void settings_factoryReset() {
     p.begin(NS, false);
     p.clear();
     p.end();
+    Preferences a;                                   // the locked adult filter goes with a factory reset
+    a.begin("adblock", false);
+    a.remove("adult");
+    a.remove("adultlock");
+    a.end();
 }

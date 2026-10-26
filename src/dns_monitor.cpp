@@ -297,6 +297,16 @@ static void dnsTask(void *) {
                 }
             }
             qApp = apps_classifyDomain(domain);
+            if (qApp != APP_OTHER && quota_ipAppBlocked((uint32_t)clientIp, qApp)) {      // an app killed for this user
+                int bl = dns_buildBlocked(query, len, reply, sizeof(reply));
+                if (bl > 0) {
+                    logQuery(clientIp, domain, qApp, (uint8_t)AB_APP);
+                    server.beginPacket(clientIp, clientPort);
+                    server.write(reply, bl);
+                    server.endPacket();
+                    continue;
+                }
+            }
             logQuery(clientIp, domain, qApp, 0);
             noteTop(clientIp, domain, qApp);
         } else {

@@ -190,6 +190,15 @@ static bool foreignHost(AsyncWebServerRequest *req) {
     return true;
 }
 
+// The short names ("usage.lan", "my.usage") are the user's own page, never the admin login.
+static bool usageHost(AsyncWebServerRequest *req) {
+    String host = req->host();
+    int colon = host.indexOf(':');
+    if (colon >= 0) host = host.substring(0, colon);
+    host.toLowerCase();
+    return host == "usage.lan" || host == "my.usage";
+}
+
 static void redirectToUsage(AsyncWebServerRequest *req) {
     req->redirect(String("http://") + WiFi.softAPIP().toString() + "/my_usage");
 }
@@ -260,6 +269,8 @@ static String buildStatusJson() {
             o["online"]       = devs[i].online;
             o["rssi"]         = devs[i].rssi;
             o["ads"]          = adblock_blockedFor(devs[i].ip);
+            JsonArray kills = o["kill"].to<JsonArray>();                                               // apps killed for this user
+            for (int a = 0; a < APP_COUNT; a++) if ((devs[i].appBlock >> a) & 1) kills.add(a);
             JsonArray cats = o["cats"].to<JsonArray>();
             for (int c = 0; c < CAT_COUNT; c++) cats.add(devs[i].catToday[c] >> 10);                   // KB per category
         }
@@ -359,12 +370,14 @@ void webServer_init() {
 
     // ---- pages ----
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
+        if (usageHost(req)) { req->redirect("/my_usage"); return; }
         if (foreignHost(req)) { redirectToUsage(req); return; }           // a paused user's browser
         if (uiMissing) { sendRecovery(req); return; }                     // repair page
         if (!isAuthed(req)) { req->redirect("/login"); return; }
         sendPage(req, "/index.html");
     });
     server.on("/login", HTTP_GET, [](AsyncWebServerRequest *req) {
+        if (usageHost(req)) { req->redirect("/my_usage"); return; }
         if (foreignHost(req)) { redirectToUsage(req); return; }
         if (uiMissing) { sendRecovery(req); return; }
         if (isAuthed(req)) { req->redirect("/"); return; }
@@ -403,6 +416,8 @@ void webServer_init() {
         doc["down"] = ci.downKbps;
         doc["up"] = ci.upKbps;
         doc["ads"] = adblock_blockedFor((uint32_t)req->client()->remoteIP());
+        JsonArray killed = doc["killed"].to<JsonArray>();
+        for (int a = 0; a < APP_COUNT; a++) if ((ci.appBlock >> a) & 1) killed.add(apps_name(a));
 
         uint64_t *ab = (uint64_t *)malloc(APP_COUNT * sizeof(uint64_t));
         uint32_t (*hours)[CAT_COUNT] = (uint32_t (*)[CAT_COUNT])malloc(24 * CAT_COUNT * sizeof(uint32_t));
@@ -495,6 +510,7 @@ void webServer_init() {
             JsonArray p = apps.add<JsonArray>();
             p.add(apps_name(a));
             p.add(apps_category(a));
+            p.add(quota_appKillable(a) ? 1 : 0);
         }
         String out;
         serializeJson(doc, out);
@@ -823,6 +839,7 @@ void webServer_init() {
         AdblockInfo ab;
         adblock_info(ab);
         doc["enabled"] = ab.enabled;      doc["names"] = ab.listNames;
+        doc["adult"] = ab.adultOn;        doc["adultLocked"] = ab.adultLocked;  doc["adultNames"] = ab.adultNames;
         doc["userBlocks"] = ab.userBlocks; doc["userAllows"] = ab.userAllows;
         doc["blockedTotal"] = ab.blockedTotal;
         doc["fileBytes"] = ab.fileBytes;  doc["maxBytes"] = HOSTS_FILE_MAX;
@@ -842,6 +859,22 @@ void webServer_init() {
         String out;
         serializeJson(doc, out);
         sendJson(req, 200, out);
+    });
+    // "Kill porn": on (optionally locked). A locked filter cannot be turned off from here.
+    server.on("/api/adult", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!guard(req, true)) return;
+        String err;
+        if (!adblock_setAdult(param(req, "on") == "1", param(req, "lock") == "1", err)) { req->send(409, "text/plain", err); return; }
+        req->send(200, "text/plain", "ok");
+    });
+    // Kill / restore one app for one user.
+    server.on("/api/appkill", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!guard(req, true)) return;
+        int app = param(req, "app").toInt();
+        if (app <= 0 || app >= APP_COUNT || !quota_setAppBlock(param(req, "mac").c_str(), (uint8_t)app, param(req, "on") == "1")) {
+            req->send(400, "text/plain", "cannot block that app for this device"); return;
+        }
+        req->send(200, "text/plain", "ok");
     });
     server.on("/api/adblock/enable", HTTP_POST, [](AsyncWebServerRequest *req) {
         if (!guard(req, true)) return;

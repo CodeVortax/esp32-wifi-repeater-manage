@@ -25,7 +25,7 @@ jobs:
       - name: Blocklist is up to date
         run: |
           python3 scripts/gen_blocklist.py
-          git diff --exit-code src/blocklist_data.h blocklist/compiled-names.txt
+          git diff --exit-code src/blocklist_data.h src/adult_data.h blocklist/compiled-names.txt
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -65,6 +65,7 @@ jobs:
           APP=$(stat -c%s dist/ota-firmware.bin); UI=$(stat -c%s dist/ota-ui.bin)
           echo "ota-firmware.bin: $APP bytes (max $((0x1C0000)))"
           echo "ota-ui.bin: $UI bytes (max $((0x50000)))"
+          echo "::notice::firmware $APP of $((0x1C0000)) bytes ($(( (0x1C0000-APP)/1024 )) KB free in its slot), dashboard $UI of $((0x50000))"
           [ "$APP" -le $((0x1C0000)) ] || { echo "::error::firmware does not fit the app partition"; exit 1; }
           [ "$UI" -le $((0x50000)) ] || { echo "::error::dashboard files do not fit the spiffs partition"; exit 1; }
 

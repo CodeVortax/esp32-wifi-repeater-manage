@@ -127,7 +127,7 @@ static int findOrCreateLocked(const uint8_t *mac) {
     // carry no manual settings (a name, the whitelist or a manual block).
     int victim = -1;
     for (i = 0; i < MAX_TRACKED_DEVICES; i++) {
-        bool precious = devices[i].name[0] || devices[i].whitelisted || devices[i].blocked;
+        bool precious = devices[i].name[0] || devices[i].whitelisted || devices[i].blocked || devices[i].appBlock;
         if (precious) continue;
         if (victim < 0 || (int32_t)(devices[victim].lastSeenMs - devices[i].lastSeenMs) > 0) victim = i;
     }
@@ -180,7 +180,10 @@ static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool uplo
         d.lastSeenMs = millis();
         if (isIp4 && localIp != 0) d.ip = localIp;
 
-        if (!d.whitelisted && !toSelf && (d.blocked || wanOff)) {          // the repeater itself stays reachable: it shows the notice
+        bool appKill = !toSelf && app != APP_OTHER && ((d.appBlock >> app) & 1);   // an app the admin killed for this user
+        if (appKill) {
+            drop = true;
+        } else if (!d.whitelisted && !toSelf && (d.blocked || wanOff)) {   // the repeater itself stays reachable: it shows the notice
             drop = true;
         } else {
             if (!d.whitelisted && !toSelf) {
@@ -348,10 +351,51 @@ static void saveCfg() {
         p.end();
         free(buf);
         if (w != bytes) { saveFailures++; portENTER_CRITICAL(&mux); cfgDirty = true; portEXIT_CRITICAL(&mux); }
+        else saveAppBlocks();
     } else {
         portENTER_CRITICAL(&mux); cfgDirty = true; portEXIT_CRITICAL(&mux);      // try again later
     }
     free(recs);
+}
+
+// Killed apps are a second small blob, so the layout of "cfg3" (and every saved name) stays valid.
+struct AbRec { uint8_t mac[6]; uint8_t pad[2]; uint64_t mask; };
+
+static void saveAppBlocks() {
+    AbRec recs[MAX_TRACKED_DEVICES];
+    int n = 0;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+        if (!devices[i].active || !devices[i].appBlock) continue;
+        memset(&recs[n], 0, sizeof(AbRec));
+        memcpy(recs[n].mac, devices[i].mac, 6);
+        recs[n].mask = devices[i].appBlock;
+        n++;
+    }
+    portEXIT_CRITICAL(&mux);
+    Preferences p;
+    p.begin(NVS_QUOTA_NAMESPACE, false);
+    if (n == 0) p.remove("ab1");
+    else if (p.putBytes("ab1", recs, n * sizeof(AbRec)) != n * sizeof(AbRec)) saveFailures++;
+    p.end();
+}
+
+static void loadAppBlocks() {
+    Preferences p;
+    p.begin(NVS_QUOTA_NAMESPACE, false);
+    size_t bytes = p.getBytesLength("ab1");
+    if (bytes >= sizeof(AbRec) && bytes % sizeof(AbRec) == 0 && bytes <= MAX_TRACKED_DEVICES * sizeof(AbRec)) {
+        AbRec recs[MAX_TRACKED_DEVICES];
+        if (p.getBytes("ab1", recs, bytes) == bytes) {
+            portENTER_CRITICAL(&mux);
+            for (size_t k = 0; k < bytes / sizeof(AbRec); k++) {
+                int i = findSlotLocked(recs[k].mac);
+                if (i >= 0) devices[i].appBlock = recs[k].mask;
+            }
+            portEXIT_CRITICAL(&mux);
+        }
+    }
+    p.end();
 }
 
 static void saveUse(int32_t dayKey) {
@@ -484,6 +528,8 @@ static int32_t loadFromNvs() {
         portEXIT_CRITICAL(&mux);
         free(cfg);
     }
+
+    loadAppBlocks();
 
     int32_t day = -1;
     uint8_t *use = readBlob(p, "use3", USE_MAGIC, sizeof(UseHdr), sizeof(UseRec), count, crc);
@@ -898,6 +944,7 @@ bool quota_clientInfo(uint32_t ip, ClientInfo &o) {
                        d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL;
         o.whitelisted = d.whitelisted;
         o.warnPending = d.warnPending;
+        o.appBlock    = d.appBlock;
         break;
     }
     portEXIT_CRITICAL(&mux);
@@ -929,6 +976,38 @@ bool quota_wantsNotice(uint32_t ip, bool isCheck) {
 }
 
 bool quota_noticeEnabled() { return noticeOn; }
+
+bool quota_appKillable(uint8_t app) {
+    return app < APP_COUNT && app != APP_OTHER && app != APP_SYSTEM && app != APP_ADS && !apps_isGeneric(app);
+}
+
+bool quota_setAppBlock(const char *macStr, uint8_t app, bool on) {
+    if (!quota_appKillable(app)) return false;
+    return withDevice(macStr, [&](DeviceUsage &d) {
+        if (on) d.appBlock |= (1ULL << app); else d.appBlock &= ~(1ULL << app);
+    });
+}
+
+uint64_t quota_appBlockMask(const char *macStr) {
+    uint8_t mac[6];
+    if (!macStr || !parseMac(macStr, mac)) return 0;
+    uint64_t m = 0;
+    portENTER_CRITICAL(&mux);
+    int i = findSlotLocked(mac);
+    if (i >= 0) m = devices[i].appBlock;
+    portEXIT_CRITICAL(&mux);
+    return m;
+}
+
+bool quota_ipAppBlocked(uint32_t ip, uint8_t app) {
+    if (ip == 0 || app >= APP_COUNT) return false;
+    bool yes = false;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++)
+        if (devices[i].active && devices[i].ip == ip) { yes = (devices[i].appBlock >> app) & 1; break; }
+    portEXIT_CRITICAL(&mux);
+    return yes;
+}
 
 void quota_setNoticeEnabled(bool on) {
     noticeOn = on;
