@@ -94,3 +94,16 @@ jobs:
             ${{ env.ARTIFACT }}*.bin
             ${{ env.ARTIFACT }}*.bin.sha256
           generate_release_notes: true
+
+      # A plain, resumable download link for slow or unreliable connections (curl -C -).
+      - name: Publish the rolling "latest" build
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest --prerelease --target "$GITHUB_SHA" \
+            --title "Latest build (master)" --notes "Rolling build of master. For a flaky connection: curl -L -C - -O <asset url>" \
+            "$ARTIFACT-ota-firmware.bin" "$ARTIFACT-ota-firmware.bin.sha256" \
+            "$ARTIFACT-ota-ui.bin" "$ARTIFACT-ota-ui.bin.sha256" \
+            "$ARTIFACT.bin" "$ARTIFACT.bin.sha256"
