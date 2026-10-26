@@ -7,6 +7,7 @@
 #include "wifi_repeater.h"
 #include "apps.h"
 #include "ota.h"
+#include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
 #include "adblock.h"
