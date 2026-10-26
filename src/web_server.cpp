@@ -7,6 +7,7 @@
 #include "wifi_repeater.h"
 #include "apps.h"
 #include "ota.h"
+#include <esp_system.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
@@ -211,6 +212,12 @@ static String buildStatusJson() {
     JsonObject sys = doc["sys"].to<JsonObject>();
     sys["version"]         = FW_VERSION;
     sys["uptime"]          = (uint32_t)(millis() / 1000);
+    {
+        static const char *const why[] = { "unknown", "power on", "external reset", "software restart", "crash (panic)", "interrupt watchdog",
+                                           "task watchdog", "other watchdog", "deep sleep", "BROWNOUT (power dipped)", "SDIO", "USB", "JTAG", "eFuse", "power glitch", "CPU lockup" };
+        int r = (int)esp_reset_reason();
+        sys["resetReason"] = (r >= 0 && r < (int)(sizeof(why) / sizeof(why[0]))) ? why[r] : "unknown";
+    }
     sys["heap"]            = ESP.getFreeHeap();
     sys["upstream"]        = wifiRepeater_isUpstreamConnected();
     sys["staSsid"]         = settings_getStaSsid();
