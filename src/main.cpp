@@ -11,6 +11,7 @@
 #include "apps.h"
 #include "ota.h"
 #include "adblock.h"
+#include "events.h"
 
 // Hold BOOT (GPIO0) for FACTORY_RESET_HOLD_MS to wipe the saved network/login
 // settings. This is the way back in if you forget the dashboard password.
@@ -51,6 +52,7 @@ void setup() {
     webServer_init();
     telegramBot_init();                  // background task, only when configured
 
+    events_add(EV_BOOT);
     Serial.println("[BOOT] all modules initialized");
 }
 

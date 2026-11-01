@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "events.h"
 #include "config.h"
 #include "quota_manager.h"
 #include "dns_monitor.h"
@@ -856,6 +857,34 @@ void webServer_init() {
     });
 
     // ---- memory and flash ----
+    // Network event history, newest first. RAM only (see events.h).
+    server.on("/api/events", HTTP_GET, [](AsyncWebServerRequest *req) {
+        if (!guard(req, false)) return;
+        EventRec *ev = new (std::nothrow) EventRec[EVENT_LOG_SIZE];
+        if (!ev) { req->send(503, "text/plain", "low memory"); return; }
+        int n = events_snapshot(ev, EVENT_LOG_SIZE);
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        for (int i = 0; i < n; i++) {
+            JsonObject o = arr.add<JsonObject>();
+            o["ty"] = ev[i].type;
+            o["t"]  = ev[i].epoch;                         // 0 = the clock was not set yet
+            o["up"] = ev[i].upSec;
+            o["a"]  = ev[i].arg;
+            bool hasMac = false;
+            for (int k = 0; k < 6; k++) if (ev[i].mac[k]) hasMac = true;
+            if (hasMac) {
+                char m[18];
+                snprintf(m, sizeof(m), "%02X:%02X:%02X:%02X:%02X:%02X", ev[i].mac[0], ev[i].mac[1], ev[i].mac[2], ev[i].mac[3], ev[i].mac[4], ev[i].mac[5]);
+                o["mac"] = m;
+            }
+        }
+        delete[] ev;
+        String out;
+        serializeJson(doc, out);
+        sendJson(req, 200, out);
+    });
+
     server.on("/api/sysinfo", HTTP_GET, [](AsyncWebServerRequest *req) {
         if (!guard(req, false)) return;
         if (ota_busy()) { req->send(503, "text/plain", "update in progress"); return; }

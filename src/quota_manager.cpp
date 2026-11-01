@@ -6,6 +6,7 @@
 #include <esp_netif_net_stack.h>   // esp_netif_get_netif_impl()
 #include <esp_timer.h>
 #include <esp_crc.h>
+#include "events.h"
 #include <Preferences.h>
 #include <time.h>
 
@@ -229,15 +230,14 @@ static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool uplo
                     d.kickPending = true;       // a quick reconnect makes the phone look for a login page, which shows the notice
                 }
                 if (!d.whitelisted && !d.quotaOverride && quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday)) {
+                    d.exhaustNoted = true;                          // reported to the event log from quota_loop(), not from the packet hook
                     if (d.quotaAction == QA_BLOCK) {                // the original behaviour
                         d.blocked     = true;
                         d.autoBlock   = true;
                         d.kickPending = true;
                         useSaveNow    = true;
                         cfgDirty      = true;
-                    } else if (!d.exhaustNoted) {                   // slow down / custom / notify: the shaper above does the work
-                        d.exhaustNoted = true;                      // reported from quota_loop(), not from the packet hook
-                    }
+                    }                                               // slow down / custom / notify: the shaper above does the work
                 }
             }
         }
@@ -747,17 +747,23 @@ void quota_loop() {
 
     // Report "quota used up" (set by the packet hook, which must not print). Once per device and day.
     {
-        char who[MAX_TRACKED_DEVICES][18];
+        uint8_t who[MAX_TRACKED_DEVICES][6];
+        uint8_t act[MAX_TRACKED_DEVICES];
         int nw = 0;
         portENTER_CRITICAL(&mux);
         for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
             if (devices[i].active && devices[i].exhaustNoted && !devices[i].exhaustLogged) {
                 devices[i].exhaustLogged = true;
-                memcpy(who[nw++], devices[i].macStr, 18);
+                memcpy(who[nw], devices[i].mac, 6);
+                act[nw++] = devices[i].quotaAction;
             }
         }
         portEXIT_CRITICAL(&mux);
-        for (int i = 0; i < nw; i++) Serial.printf("[QUOTA] %s used up its daily quota - action: not blocked (slow down / notify)\n", who[i]);
+        for (int i = 0; i < nw; i++) {
+            char ms[18]; macToStr(who[i], ms);
+            Serial.printf("[QUOTA] %s used up its daily quota (action %u)\n", ms, act[i]);
+            events_add(EV_QUOTA_HIT, who[i], act[i]);
+        }
     }
 
     if (cfgDirty && (millis() - lastCfgTry) >= 2000) saveCfg();   // the pause also stops a full flash from being hammered
@@ -908,23 +914,32 @@ bool quota_setLimit(const char *macStr, uint32_t mb) {
     });
 }
 
+static void evFor(const char *macStr, uint8_t type) {
+    uint8_t mac[6];
+    if (parseMac(macStr, mac)) events_add(type, mac);
+}
+
 bool quota_block(const char *macStr) {
-    return withDevice(macStr, [&](DeviceUsage &d) {
+    bool r = withDevice(macStr, [&](DeviceUsage &d) {
         if (d.whitelisted) return;
         d.blocked = true;
         d.autoBlock = false;                    // an admin block: a bonus must not lift it
         d.quotaOverride = false;
         d.kickPending = true;
     });
+    if (r) evFor(macStr, EV_ADMIN_BLOCK);
+    return r;
 }
 
 bool quota_unblock(const char *macStr) {
-    return withDevice(macStr, [&](DeviceUsage &d) {
+    bool r = withDevice(macStr, [&](DeviceUsage &d) {
         d.blocked = false;
         d.autoBlock = false;
         // Without this an over-quota device would be re-blocked on its very next frame.
         d.quotaOverride = true;
     });
+    if (r) evFor(macStr, EV_ADMIN_UNBLOCK);
+    return r;
 }
 
 bool quota_setWhitelist(const char *macStr, bool enabled) {
@@ -1007,6 +1022,7 @@ bool quota_addBonus(const char *macStr, uint32_t addMB) {
         ok = true;
     }
     portEXIT_CRITICAL(&mux);
+    if (ok) events_add(EV_BONUS, mac, addMB);
     return ok;
 }
 
@@ -1080,6 +1096,7 @@ void quota_resetDaily() {
     bonusDirty = true;
     portEXIT_CRITICAL(&mux);
     Serial.println("[QUOTA] daily counters reset");
+    events_add(EV_QUOTA_RESET);
 }
 
 bool quota_isTrustedIp(uint32_t ip) {

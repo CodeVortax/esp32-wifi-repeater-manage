@@ -1,4 +1,5 @@
 #include "wifi_repeater.h"
+#include "events.h"
 #include "config.h"
 #include "settings.h"
 #include <WiFi.h>
@@ -67,21 +68,25 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
         ip_napt_enable((uint32_t)WiFi.softAPIP(), 1);
         UNLOCK_TCPIP_CORE();
         Serial.println("[NAT] NAPT enabled - repeater is live");
+        events_add(EV_STA_UP);
         break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
         // reason 2/15/202 = wrong password, 201 = router not found, 8 = router dropped us
         Serial.printf("[STA] disconnected, reason=%d%s\n", info.wifi_sta_disconnected.reason,
                       staConnected ? " (was connected)" : "");
+        if (staConnected) events_add(EV_STA_DOWN, nullptr, info.wifi_sta_disconnected.reason);   // only the loss, not every failed retry
         staConnected = false;
         break;
     case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
         macStr(info.wifi_ap_staconnected.mac, mac);
         Serial.printf("[AP] client joined %s (aid %d)\n", mac, info.wifi_ap_staconnected.aid);
+        events_add(EV_DEV_JOIN, info.wifi_ap_staconnected.mac);
         break;
     case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
         macStr(info.wifi_ap_stadisconnected.mac, mac);
         Serial.printf("[AP] client left %s (aid %d, reason %d, channel now %d)\n", mac,
                       info.wifi_ap_stadisconnected.aid, info.wifi_ap_stadisconnected.reason, WiFi.channel());
+        events_add(EV_DEV_LEAVE, info.wifi_ap_stadisconnected.mac);
         break;
     default:
         break;

@@ -214,6 +214,9 @@ const I18N = {
   saveFail:'Saving to flash failed {n} time(s). Free some space (System > Memory) or restart.',lowMemWarn:'Memory is very low. Some pages may be slow.',
   blockAction:'Block this',blockedTag:'blocked',
   lastRestart:'Last restart cause',
+  evTitle:'Event history',evEmpty:'No events yet.',evNote:'Kept in memory: it starts empty after a restart.',evBoot:'Repeater started',evStaUp:'Home Wi-Fi connected',evStaDown:'Home Wi-Fi lost (reason {a})',
+  evJoin:'{n} connected',evLeave:'{n} disconnected',evQBlock:'{n} used up its daily quota: blocked',evQSlow:'{n} used up its daily quota: slowed down',evQNotify:'{n} used up its daily quota: not restricted',
+  evReset:'Daily reset: counters, blocks and bonuses cleared',evBonus:'{n} got +{a} MB for today',evABlock:'{n} blocked by the admin',evAUnblock:'{n} unblocked by the admin',evAfter:'after start',
   adultTitle:'Adult sites',adultOn:'Block adult sites',adultNames:'names in the adult list',adultHow:'Blocks adult websites for every device, using a built-in list plus keywords. Devices that use their own DNS or a VPN can still bypass DNS blocking.',
   adultLockBtn:'Lock it on',adultLockAsk:'Lock the adult filter ON? After this there is NO way to turn it off from the dashboard. Only a factory reset (hold BOOT for 5 seconds) or re-flashing removes it.',adultLocked:'Adult sites are blocked and the filter is locked. It can only be removed by a factory reset (hold BOOT 5 s) or by re-flashing the board.',
   killApps:'Block apps for this user',killHint:'A blocked app gets no data at all for this user.',adultV:'adult site',appV:'blocked app',
@@ -270,6 +273,9 @@ const I18N = {
   saveFail:'فشل الحفظ في الفلاش {n} مرة. حرّر مساحة (النظام > الذاكرة) أو أعد التشغيل.',lowMemWarn:'الذاكرة منخفضة جدًا. قد تبطؤ بعض الصفحات.',
   blockAction:'حظر هذا',blockedTag:'محظور',
   lastRestart:'سبب آخر إعادة تشغيل',
+  evTitle:'سجل الأحداث',evEmpty:'لا توجد أحداث بعد.',evNote:'محفوظ في الذاكرة: يبدأ فارغًا بعد إعادة التشغيل.',evBoot:'بدأ المكرر العمل',evStaUp:'اتصل واي فاي المنزل',evStaDown:'انقطع واي فاي المنزل (السبب {a})',
+  evJoin:'اتصل {n}',evLeave:'انقطع {n}',evQBlock:'{n} استهلك حصته اليومية: تم الحظر',evQSlow:'{n} استهلك حصته اليومية: تم تبطيء السرعة',evQNotify:'{n} استهلك حصته اليومية: بلا تقييد',
+  evReset:'تصفير يومي: مُسحت العدادات والحظر والإضافات',evBonus:'{n} حصل على +{a} ميغابايت لليوم',evABlock:'حظر المشرف {n}',evAUnblock:'ألغى المشرف حظر {n}',evAfter:'بعد التشغيل',
   adultTitle:'المواقع الإباحية',adultOn:'حظر المواقع الإباحية',adultNames:'اسم في القائمة الإباحية',adultHow:'يحظر المواقع الإباحية لكل الأجهزة بقائمة مدمجة وكلمات مفتاحية. الأجهزة التي تستخدم DNS خاصًا أو VPN قد تتجاوز الحظر.',
   adultLockBtn:'تثبيت التفعيل',adultLockAsk:'هل تريد تثبيت الحظر؟ بعدها لا توجد طريقة لإيقافه من لوحة التحكم. فقط إعادة ضبط المصنع (اضغط BOOT لمدة 5 ثوانٍ) أو إعادة الفلاش.',adultLocked:'المواقع الإباحية محظورة والفلتر مثبّت. لا يُزال إلا بإعادة ضبط المصنع (BOOT لمدة 5 ثوانٍ) أو بإعادة فلاش اللوحة.',
   killApps:'حظر تطبيقات لهذا المستخدم',killHint:'التطبيق المحظور لا تصله أي بيانات لهذا المستخدم.',adultV:'موقع إباحي',appV:'تطبيق محظور',
@@ -605,6 +611,7 @@ function rSystem(){
      row(t('homeWifi'),sys.staSsid+(sys.upstream?' ('+sys.staIp+')':'')),row(t('macs'),h('span',{class:'dom small'},'AP '+sys.apMac+'  ·  STA '+sys.staMac)),row(t('repeater'),sys.apSsid+' ('+sys.apIp+')'),row(t('channel'),sys.channel))),
    h('div',{class:'card'},h('h2',null,t('memory')),h('div',{id:'memBox'},h('div',{class:'empty'},'...'))),
    radioCard(),
+   h('div',{class:'card'},h('h2',null,t('evTitle')),h('div',{id:'evBox'},h('div',{class:'empty'},'...')),h('div',{class:'note'},t('evNote'))),
    h('div',{class:'card'},h('h2',null,t('ping')),h('div',{class:'row'},pingHost,runPing),pingOut),
    h('div',{class:'card'},h('h2',null,t('update')),otaBox('firmware',t('updFw')),h('div',{style:'height:14px'}),otaBox('ui',t('updUi')),h('div',{class:'note'},t('updNote'))),
    h('div',{class:'row wrap'},
@@ -644,7 +651,7 @@ function otaBox(type,label){
 }
 function updateLive(){
   if(S.page==='block')fillBlockLive();
-  if(S.page==='system')fillSysinfo();
+  if(S.page==='system'){fillSysinfo();fillEvents()}
   // Speed page: refresh the per-user table values only when nothing is being typed.
   if(S.page==='speed')for(const tr of document.querySelectorAll('#page tr[data-mac]')){
     const d=devByMac(tr.dataset.mac);if(!d)continue;
@@ -805,6 +812,22 @@ function meter(label,used,total,detail){
   return h('div',{style:'margin:10px 0'},h('div',{class:'row between small'},h('span',null,label),h('span',{class:'muted'},detail||(fmtBytes(used)+' / '+fmtBytes(total)))),
     h('div',{class:'hbar',style:'margin-top:4px;height:8px'},h('i',{style:`width:${pct.toFixed(1)}%;background:${pct>90?'var(--red)':pct>75?'var(--amber)':'var(--blue)'}`})));
 }
+const EV_KEYS=['evBoot','evStaUp','evStaDown','evJoin','evLeave',null,'evReset','evBonus','evABlock','evAUnblock'];
+function evText(e){
+  const d=e.mac?devByMac(e.mac):null,n=d?userName(d):(e.mac||'');
+  let k=EV_KEYS[e.ty];
+  if(e.ty===5)k=['evQBlock','evQSlow','evQSlow','evQNotify'][e.a]||'evQBlock';
+  return k?t(k).replace('{n}',n).replace('{a}',e.a):'?';
+}
+function fillEvents(){
+  const box=$('evBox');if(!box)return;
+  const ev=S.events;if(!ev)return;
+  if(!ev.length){box.replaceChildren(h('div',{class:'empty'},t('evEmpty')));return}
+  box.replaceChildren(h('table',null,...ev.map(e=>h('tr',null,
+    h('td',{class:'muted small',style:'white-space:nowrap;vertical-align:top'},e.t?new Date(e.t*1000).toLocaleString():fmtUp(e.up)+' '+t('evAfter')),
+    h('td',null,evText(e))))));
+}
+async function loadEvents(){try{S.events=await (await api('/api/events')).json()}catch(e){}}
 function fillSysinfo(){
   const box=$('memBox');if(!box)return;
   const m=S.sysinfo;if(!m){return}
@@ -939,7 +962,7 @@ async function poke(){
   if(['apps','users'].includes(S.page)){await loadApps();if(S.page==='apps')await loadLearn();renderPage(false)}
   if(S.page==='overview')loadOverviewChart();
   if(S.page==='block'){await loadAdblock();fillBlockLive()}
-  if(S.page==='system'){await loadSysinfo();fillSysinfo()}
+  if(S.page==='system'){await loadSysinfo();fillSysinfo();await loadEvents();fillEvents()}
   lastSlow=Date.now();
 }
 function openWs(){
@@ -958,7 +981,7 @@ async function tick(){
   }
   if(S.page==='overview'&&Date.now()-lastOv>30000)loadOverviewChart();
   if(S.page==='block'&&Date.now()-lastSlow>3000){lastSlow=Date.now();await loadAdblock();fillBlockLive()}
-  if(S.page==='system'&&Date.now()-lastSlow>3000){lastSlow=Date.now();await loadSysinfo();fillSysinfo()}
+  if(S.page==='system'&&Date.now()-lastSlow>3000){lastSlow=Date.now();await loadSysinfo();fillSysinfo();await loadEvents();fillEvents()}
 }
 
 /* ---------- start ---------- */
