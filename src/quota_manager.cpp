@@ -54,6 +54,7 @@ static volatile bool   noticeOn   = true;   // tell users at 80%  // "internet o
 static volatile bool useDirty    = false;   // counters changed since the last save
 static volatile bool useSaveNow  = false;   // save the counters at once (block, midnight)
 static volatile bool cfgDirty    = false;   // names / limits / flags changed -> save at once
+static volatile bool bonusDirty  = false;   // today's bonuses changed -> save (only on an admin action or the daily reset)
 static int32_t       lastResetKey = -1;     // year*1000 + yday of the last reset
 static bool          hooksOk      = false;
 static uint8_t       nextUserNo   = 1;
@@ -187,8 +188,12 @@ static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool uplo
             drop = true;
         } else {
             if (!d.whitelisted && !toSelf) {
-                uint32_t devRate = rateBytesPerSec(upload ? d.upKbps : d.downKbps,
-                                                   upload ? speed.defaultUpKbps : speed.defaultDownKbps);
+                // Quota used up + a slow-down action: that speed replaces the normal cap (never raises it).
+                // Evaluated from the byte counter every frame, so a bonus or the daily reset acts on the next frame.
+                bool exh = !d.quotaOverride && quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday);
+                uint32_t devRate = quota_effectiveRate(
+                    rateBytesPerSec(upload ? d.upKbps : d.downKbps, upload ? speed.defaultUpKbps : speed.defaultDownKbps),
+                    exh, d.quotaAction, d.slowKBps);
                 uint32_t allRate = (upload ? speed.globalUpKbps : speed.globalDownKbps) * 125u;
                 Bucket &devB = upload ? d.ul : d.dl;
                 Bucket &allB = upload ? gUl : gDl;
@@ -217,18 +222,22 @@ static bool account(const uint8_t *frame, uint16_t plen, uint32_t len, bool uplo
                     hourDirty = true;
                 }
                 if (noticeOn && !d.warnSent && !d.whitelisted && !d.quotaOverride && d.dailyLimitMB > 0 &&
-                    d.bytesToday * 100ULL >= (uint64_t)d.dailyLimitMB * 1048576ULL * QUOTA_WARN_PERCENT) {
+                    d.bytesToday * 100ULL >= quota_effectiveBytes(d.dailyLimitMB, d.bonusMB) * QUOTA_WARN_PERCENT) {
                     d.warnSent    = true;
                     d.warnPending = true;
                     d.warnSince   = millis();
                     d.kickPending = true;       // a quick reconnect makes the phone look for a login page, which shows the notice
                 }
-                if (!d.whitelisted && !d.quotaOverride && d.dailyLimitMB > 0 &&
-                    d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL) {
-                    d.blocked     = true;
-                    d.kickPending = true;
-                    useSaveNow    = true;
-                    cfgDirty      = true;
+                if (!d.whitelisted && !d.quotaOverride && quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday)) {
+                    if (d.quotaAction == QA_BLOCK) {                // the original behaviour
+                        d.blocked     = true;
+                        d.autoBlock   = true;
+                        d.kickPending = true;
+                        useSaveNow    = true;
+                        cfgDirty      = true;
+                    } else if (!d.exhaustNoted) {                   // slow down / custom / notify: the shaper above does the work
+                        d.exhaustNoted = true;                      // reported from quota_loop(), not from the packet hook
+                    }
                 }
             }
         }
@@ -294,14 +303,15 @@ static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 struct CfgHdr { uint32_t magic; uint32_t crc; uint16_t count; uint8_t nextUserNo; uint8_t pad; };
 struct CfgRec {
     uint8_t  mac[6];
-    uint8_t  flags;            // bit0 whitelisted, bit1 blocked
+    uint8_t  flags;            // bit0 whitelisted, bit1 blocked, bit2 blocked by the quota
     uint8_t  userNo;
     uint32_t limitMB;
     uint32_t downKbps;
     uint32_t upKbps;
     char     name[NAME_MAX_BYTES + 1];
-    uint8_t  pad[3];
+    uint8_t  ext[3];           // [0] quota action, [1..2] slow-down speed in KB/s (little endian). Old blobs: zeros = block, default
 };
+static_assert(sizeof(CfgRec) == 56, "CfgRec must keep its size so blobs saved by older versions still load");
 struct UseHdr { uint32_t magic; uint32_t crc; int32_t dayKey; uint16_t count; uint16_t appCount; };
 struct UseRec {
     uint8_t  mac[6];
@@ -311,11 +321,52 @@ struct UseRec {
     uint32_t appKB[APP_COUNT];
 };
 
+#define BON_MAGIC 0x314E4F42u   // "BON1"
+struct BonRec { uint8_t mac[6]; uint16_t pad; uint32_t bonusMB; uint32_t pad2; };
+
 static volatile uint32_t saveFailures = 0;     // writes that did not reach flash (full / worn out)
 static uint32_t          lastCfgTry   = 0;
 uint32_t quota_saveFailures() { return saveFailures; }
 
 static void saveAppBlocks();
+static uint32_t lastBonusTry = 0;
+// Today's bonuses are NOT part of the permanent settings: their own blob carries the quota-day key, and it
+// is only read back when that key equals the counters' day, so a bonus can never survive into another day.
+static void saveBonus(int32_t dayKey) {
+    lastBonusTry = millis();
+    BonRec *recs = (BonRec *)calloc(MAX_TRACKED_DEVICES, sizeof(BonRec));
+    if (!recs) return;
+    int n = 0;
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+        if (!devices[i].active || devices[i].bonusMB == 0) continue;
+        memcpy(recs[n].mac, devices[i].mac, 6);
+        recs[n].bonusMB = devices[i].bonusMB;
+        n++;
+    }
+    bonusDirty = false;
+    portEXIT_CRITICAL(&mux);
+
+    size_t bytes = sizeof(UseHdr) + n * sizeof(BonRec);
+    uint8_t *buf = (uint8_t *)malloc(bytes);
+    if (buf) {
+        UseHdr h = {};
+        h.magic = BON_MAGIC; h.dayKey = dayKey; h.count = n; h.appCount = 0;
+        h.crc = esp_crc32_le(0, (const uint8_t *)recs, n * sizeof(BonRec));
+        memcpy(buf, &h, sizeof(h));
+        memcpy(buf + sizeof(h), recs, n * sizeof(BonRec));
+        Preferences p;
+        p.begin(NVS_QUOTA_NAMESPACE, false);
+        size_t w = p.putBytes("bon1", buf, bytes);
+        p.end();
+        free(buf);
+        if (w != bytes) { saveFailures++; portENTER_CRITICAL(&mux); bonusDirty = true; portEXIT_CRITICAL(&mux); }
+    } else {
+        portENTER_CRITICAL(&mux); bonusDirty = true; portEXIT_CRITICAL(&mux);
+    }
+    free(recs);
+}
+
 static void saveCfg() {
     lastCfgTry = millis();
     CfgRec *recs = (CfgRec *)calloc(MAX_TRACKED_DEVICES, sizeof(CfgRec));
@@ -327,7 +378,10 @@ static void saveCfg() {
         if (!devices[i].active) continue;
         CfgRec &r = recs[n++];
         memcpy(r.mac, devices[i].mac, 6);
-        r.flags    = (devices[i].whitelisted ? 1 : 0) | (devices[i].blocked ? 2 : 0);
+        r.flags    = (devices[i].whitelisted ? 1 : 0) | (devices[i].blocked ? 2 : 0) | (devices[i].autoBlock ? 4 : 0);
+        r.ext[0]   = devices[i].quotaAction;
+        r.ext[1]   = (uint8_t)(devices[i].slowKBps & 0xFF);
+        r.ext[2]   = (uint8_t)((devices[i].slowKBps >> 8) & 0xFF);
         r.userNo   = devices[i].userNo;
         r.limitMB  = devices[i].dailyLimitMB;
         r.downKbps = devices[i].downKbps;
@@ -518,6 +572,9 @@ static int32_t loadFromNvs() {
             initSlotLocked(i, r.mac, false);
             devices[i].whitelisted  = r.flags & 1;
             devices[i].blocked      = r.flags & 2;
+            devices[i].autoBlock    = (r.flags & 4) && (r.flags & 2);
+            devices[i].quotaAction  = quota_actionValid(r.ext[0]) ? r.ext[0] : (uint8_t)QA_BLOCK;
+            devices[i].slowKBps     = (uint32_t)r.ext[1] | ((uint32_t)r.ext[2] << 8);
             devices[i].userNo       = r.userNo;
             devices[i].dailyLimitMB = r.limitMB;
             devices[i].downKbps     = r.downKbps;
@@ -575,12 +632,28 @@ static int32_t loadFromNvs() {
         free(hr);
     }
 
+    // Today's bonuses: only when they were saved for the very same quota day as the counters.
+    uint8_t *bon = readBlob(p, "bon1", BON_MAGIC, sizeof(UseHdr), sizeof(BonRec), count, crc);
+    if (bon) {
+        UseHdr h; memcpy(&h, bon, sizeof(h));
+        if (h.dayKey == day) {
+            portENTER_CRITICAL(&mux);
+            for (int k = 0; k < count; k++) {
+                BonRec r; memcpy(&r, bon + sizeof(UseHdr) + k * sizeof(BonRec), sizeof(r));
+                int i = findSlotLocked(r.mac);
+                if (i >= 0) devices[i].bonusMB = r.bonusMB > QUOTA_BONUS_MAX_MB ? QUOTA_BONUS_MAX_MB : r.bonusMB;
+            }
+            portEXIT_CRITICAL(&mux);
+        }
+        free(bon);
+    }
+
     wanOff = p.getBool("wan_off", false);
     noticeOn = p.getBool("notice_on", true);
     portENTER_CRITICAL(&mux);                       // a reboot must not repeat notices already given today
     for (int i = 0; i < MAX_TRACKED_DEVICES; i++)
         if (devices[i].active && devices[i].dailyLimitMB > 0 &&
-            devices[i].bytesToday * 100ULL >= (uint64_t)devices[i].dailyLimitMB * 1048576ULL * QUOTA_WARN_PERCENT)
+            devices[i].bytesToday * 100ULL >= quota_effectiveBytes(devices[i].dailyLimitMB, devices[i].bonusMB) * QUOTA_WARN_PERCENT)
             devices[i].warnSent = true;
     portEXIT_CRITICAL(&mux);
 
@@ -670,6 +743,23 @@ void quota_loop() {
         }
     }
 
+    if (bonusDirty && (millis() - lastBonusTry) >= 2000) saveBonus(lastResetKey);
+
+    // Report "quota used up" (set by the packet hook, which must not print). Once per device and day.
+    {
+        char who[MAX_TRACKED_DEVICES][18];
+        int nw = 0;
+        portENTER_CRITICAL(&mux);
+        for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
+            if (devices[i].active && devices[i].exhaustNoted && !devices[i].exhaustLogged) {
+                devices[i].exhaustLogged = true;
+                memcpy(who[nw++], devices[i].macStr, 18);
+            }
+        }
+        portEXIT_CRITICAL(&mux);
+        for (int i = 0; i < nw; i++) Serial.printf("[QUOTA] %s used up its daily quota - action: not blocked (slow down / notify)\n", who[i]);
+    }
+
     if (cfgDirty && (millis() - lastCfgTry) >= 2000) saveCfg();   // the pause also stops a full flash from being hammered
 
     static uint32_t lastUseSave = 0;
@@ -735,6 +825,16 @@ int quota_snapshot(DeviceUsage *out, int maxCount) {
     for (int i = 0; i < MAX_TRACKED_DEVICES && n < maxCount; i++) {
         if (!devices[i].active) continue;
         out[n] = devices[i];
+        {   // what is really enforced right now (the same functions the packet hook uses)
+            const DeviceUsage &d = devices[i];
+            bool exh = !d.whitelisted && !d.quotaOverride && quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday);
+            out[n].exhausted = exh;
+            if (d.whitelisted) { out[n].effDownKbps = 0; out[n].effUpKbps = 0; }
+            else {
+                out[n].effDownKbps = quota_effectiveRate(rateBytesPerSec(d.downKbps, speed.defaultDownKbps), exh, d.quotaAction, d.slowKBps) / 125u;
+                out[n].effUpKbps   = quota_effectiveRate(rateBytesPerSec(d.upKbps,   speed.defaultUpKbps),   exh, d.quotaAction, d.slowKBps) / 125u;
+            }
+        }
         memset(out[n].catToday, 0, sizeof(out[n].catToday));
         for (int a = 0; a < APP_COUNT; a++) out[n].catToday[apps_category(a)] += appBytes[i][a];
         n++;
@@ -802,8 +902,9 @@ bool quota_setLimit(const char *macStr, uint32_t mb) {
         d.dailyLimitMB  = mb;
         d.quotaOverride = false;
         d.warnSent = d.warnPending = false;       // a new limit starts the 80% check again
-        // Raising the limit above current usage lifts an automatic block.
-        if (mb == 0 || d.bytesToday < (uint64_t)mb * 1048576ULL) d.blocked = false;
+        d.exhaustNoted = d.exhaustLogged = false;
+        // Raising the limit above current usage (today's bonus counts) lifts an automatic block.
+        if (mb == 0 || d.bytesToday < quota_effectiveBytes(mb, d.bonusMB)) { d.blocked = false; d.autoBlock = false; }
     });
 }
 
@@ -811,6 +912,7 @@ bool quota_block(const char *macStr) {
     return withDevice(macStr, [&](DeviceUsage &d) {
         if (d.whitelisted) return;
         d.blocked = true;
+        d.autoBlock = false;                    // an admin block: a bonus must not lift it
         d.quotaOverride = false;
         d.kickPending = true;
     });
@@ -819,6 +921,7 @@ bool quota_block(const char *macStr) {
 bool quota_unblock(const char *macStr) {
     return withDevice(macStr, [&](DeviceUsage &d) {
         d.blocked = false;
+        d.autoBlock = false;
         // Without this an over-quota device would be re-blocked on its very next frame.
         d.quotaOverride = true;
     });
@@ -827,7 +930,7 @@ bool quota_unblock(const char *macStr) {
 bool quota_setWhitelist(const char *macStr, bool enabled) {
     return withDevice(macStr, [&](DeviceUsage &d) {
         d.whitelisted = enabled;
-        if (enabled) d.blocked = false;
+        if (enabled) { d.blocked = false; d.autoBlock = false; }
     });
 }
 
@@ -859,6 +962,68 @@ bool quota_setDeviceSpeed(const char *macStr, uint32_t downKbps, uint32_t upKbps
         d.dl.init  = false;                            // start with a full bucket under the new rate
         d.ul.init  = false;
     });
+}
+
+bool quota_setAction(const char *macStr, uint8_t action, uint32_t slowKBps) {
+    if (!quota_actionValid(action)) return false;
+    if (action == QA_CUSTOM && (slowKBps < QUOTA_SLOW_KBPS_MIN || slowKBps > QUOTA_SLOW_KBPS_MAX)) return false;
+    return withDevice(macStr, [&](DeviceUsage &d) {
+        d.quotaAction = action;
+        if (action == QA_CUSTOM) d.slowKBps = slowKBps;
+        d.dl.init = false;                              // the new rate starts with a fresh bucket
+        d.ul.init = false;
+        d.exhaustNoted = d.exhaustLogged = false;
+        if (action == QA_BLOCK) {
+            // Already over the limit: block now instead of waiting for the next counted frame.
+            if (!d.whitelisted && !d.quotaOverride && quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday)) {
+                d.blocked = true; d.autoBlock = true; d.kickPending = true;
+            }
+        } else if (d.blocked && d.autoBlock) {
+            d.blocked = false;                          // a quota block turns into a slow-down; an admin block stays
+            d.autoBlock = false;
+        }
+    });
+}
+
+bool quota_addBonus(const char *macStr, uint32_t addMB) {
+    uint8_t mac[6];
+    if (!parseMac(macStr, mac)) return false;
+    bool ok = false;
+    portENTER_CRITICAL(&mux);
+    int i = findSlotLocked(mac);
+    if (i >= 0 && devices[i].dailyLimitMB > 0 && quota_bonusAdd(devices[i].bonusMB, addMB)) {
+        DeviceUsage &d = devices[i];
+        d.warnSent = d.warnPending = false;             // the 80% notice applies to the new allowance
+        d.exhaustNoted = d.exhaustLogged = false;
+        // Not exhausted any more: lift a QUOTA block. Used up again later = the configured action applies again.
+        if (d.blocked && d.autoBlock && !quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday)) {
+            d.blocked = false;
+            d.autoBlock = false;
+            cfgDirty = true;
+        }
+        d.dl.init = false;                              // slow-down -> normal speed: start with a full bucket
+        d.ul.init = false;
+        bonusDirty = true;
+        ok = true;
+    }
+    portEXIT_CRITICAL(&mux);
+    return ok;
+}
+
+bool quota_clearBonus(const char *macStr) {
+    uint8_t mac[6];
+    if (!parseMac(macStr, mac)) return false;
+    bool ok = false;
+    portENTER_CRITICAL(&mux);
+    int i = findSlotLocked(mac);
+    if (i >= 0) {
+        devices[i].bonusMB = 0;
+        devices[i].exhaustNoted = devices[i].exhaustLogged = false;
+        bonusDirty = true;
+        ok = true;
+    }
+    portEXIT_CRITICAL(&mux);
+    return ok;
 }
 
 SpeedConfig quota_getSpeedConfig() {
@@ -896,7 +1061,11 @@ void quota_resetDaily() {
     for (int i = 0; i < MAX_TRACKED_DEVICES; i++) {
         devices[i].bytesToday    = 0;
         devices[i].blocked       = false;
+        devices[i].autoBlock     = false;
         devices[i].quotaOverride = false;
+        devices[i].bonusMB       = 0;                   // a bonus belongs to one quota day
+        devices[i].exhaustNoted  = devices[i].exhaustLogged = false;
+        devices[i].dl.init = devices[i].ul.init = false;    // back to the normal speed with a full bucket
         devices[i].warnSent = devices[i].warnPending = false;
         memset(appBytes[i], 0, sizeof(appBytes[i]));
         memset(hourUnits[i], 0, sizeof(hourUnits[i]));
@@ -908,6 +1077,7 @@ void quota_resetDaily() {
     useDirty = true;
     useSaveNow = true;
     cfgDirty = true;
+    bonusDirty = true;
     portEXIT_CRITICAL(&mux);
     Serial.println("[QUOTA] daily counters reset");
 }
@@ -938,11 +1108,15 @@ bool quota_clientInfo(uint32_t ip, ClientInfo &o) {
         memcpy(o.macStr, d.macStr, sizeof(o.macStr));
         o.bytesToday = d.bytesToday;
         o.limitMB    = d.dailyLimitMB;
+        o.bonusMB    = d.bonusMB;
+        o.quotaAction = d.quotaAction;
+        o.slowKBps   = d.quotaAction == QA_SLOW ? QUOTA_SLOW_KBPS_DEFAULT : quota_slowBytesPerSec(d.quotaAction, d.slowKBps) / 1000u;
+        o.exhausted  = !d.whitelisted && !d.quotaOverride && quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday);
         o.downKbps   = d.downKbps == SPEED_DEFAULT ? speed.defaultDownKbps : d.downKbps;
         o.upKbps     = d.upKbps   == SPEED_DEFAULT ? speed.defaultUpKbps   : d.upKbps;
         o.blocked    = d.blocked;
         o.quotaHit   = d.blocked && d.dailyLimitMB > 0 && !d.quotaOverride &&
-                       d.bytesToday >= (uint64_t)d.dailyLimitMB * 1048576ULL;
+                       quota_exhausted(d.dailyLimitMB, d.bonusMB, d.bytesToday);
         o.whitelisted = d.whitelisted;
         o.warnPending = d.warnPending;
         o.appBlock    = d.appBlock;

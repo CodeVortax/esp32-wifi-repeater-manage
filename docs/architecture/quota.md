@@ -50,3 +50,22 @@ It may reconnect, but it stays blocked and gets no traffic. A limit of `0` means
 - **Speed limits** (`src/shaper.h`). Token buckets per direction: network-wide, then per user (own cap or the default). Packets over the rate are dropped, so TCP backs off. Whitelisted devices and traffic to the repeater itself are exempt.
 - **Saving.** Dirty counters are written once a minute as one CRC-checked blob; the old blob stays valid if power fails mid-write. At most 1440 writes a day, far below the flash's endurance.
 - **Tests.** `make -C test` runs the pure C++ parts on a PC with sanitizers (also in CI).
+
+## What happens at the limit, and extra data for today
+
+Each device has a quota action (default **block**, the behaviour of every earlier version, so nothing changes for existing installs):
+
+| Action | Effect when `used >= limit + today's bonus` |
+|---|---|
+| Block | As above: the device is cut off |
+| Slow down | Both directions are limited to 30 KB/s (30 000 bytes/s) |
+| Custom | The same, with the device's own speed (1-65000 KB/s, decimal) |
+| Notify only | Nothing is restricted; the event is only logged |
+
+The slow-down is not a second limiter. `account()` asks `quota_effectiveRate()` (`src/quota_policy.h`) for the rate and feeds it to the same per-device token bucket. The quota speed **replaces** the normal cap while the quota is used up; if the normal cap is already lower, the lower one stays (running out of quota never makes a device faster). The global "everybody together" bucket still applies on top. Exhaustion is computed from the byte counter on every frame, not stored as a flag, so a bonus, a new limit or the daily reset takes effect on the next frame, and reconnecting or changing IP changes nothing (the device is keyed by MAC).
+
+**Extra data for today** (`/api/bonus`) adds to the allowance without touching the permanent limit or the used bytes. Bonuses add up. They are saved in their own small blob (`bon1`) together with the quota-day key, and are only read back when that key equals the counters' day, so a bonus cannot outlive the day, even across a reboot. The daily reset clears every bonus. A bonus lifts an automatic (quota) block when the device is no longer over its allowance; a block set by the admin stays until the admin unblocks. The 80% notice is measured against limit + bonus.
+
+Units: quota and bonus are MB (1 048 576 bytes, as the daily limit always was); the slow-down speed is KB/s, decimal. The existing speed caps stay in kbit/s.
+
+Limits: the byte counters reach flash once a minute, so a power cut can lose up to a minute of counted traffic (unchanged from before).

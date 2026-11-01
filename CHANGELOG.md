@@ -3,6 +3,8 @@
 Versions follow `FW_VERSION` in `include/config.h`. All releases are betas.
 
 ## Unreleased
+- **Quota action**: choose per device what happens when the daily quota is used up: block (default, unchanged), slow down to 30 KB/s, a custom KB/s speed, or notify only. The slow-down uses the existing token buckets in both directions and replaces the normal cap until the daily reset.
+- **Extra data for today**: add 50 MB / 100 MB / 250 MB / 500 MB / 1 GB or any amount to a device without changing its permanent limit or its used bytes. Bonuses add up, are enforced by the packet hook, and disappear at the next daily reset (also after a reboot).
 - **Adult filter ("kill porn")**: built-in list of 118,887 names (330 KB, in flash) plus keyword and domain-ending rules. Optional lock: once locked there is no off switch in the dashboard or the API; only a factory reset (hold BOOT) or a re-flash removes it, and no Allow rule can lift it.
 - **Kill an app for one user** (YouTube, TikTok, Facebook, ...): its names are answered with nothing and its traffic is dropped. Set in the user's Edit dialog; the user sees it on their usage page.
 - **Usage notices**: a notice at 80% of the daily limit and at the limit; users open `http://usage.lan` (or `/my_usage`) to see their own usage in 6 languages. `usage.lan` now always opens the user page, never the admin login.

@@ -269,6 +269,13 @@ static String buildStatusJson() {
             o["bytesToday"]   = devs[i].bytesToday;
             o["bytesAllTime"] = devs[i].bytesAllTime;
             o["limitMB"]      = devs[i].dailyLimitMB;
+            o["bonusMB"]      = devs[i].bonusMB;                                                       // today's extra data
+            o["remainMB"]     = quota_remainingMB(devs[i].dailyLimitMB, devs[i].bonusMB, devs[i].bytesToday);
+            o["qAction"]      = devs[i].quotaAction;                                                   // 0 block, 1 slow 30 KB/s, 2 custom, 3 notify
+            o["slowKBps"]     = devs[i].quotaAction == QA_SLOW ? QUOTA_SLOW_KBPS_DEFAULT : quota_slowBytesPerSec(devs[i].quotaAction, devs[i].slowKBps) / 1000u;
+            o["exhausted"]    = devs[i].exhausted;
+            o["effDown"]      = devs[i].effDownKbps;                                                   // enforced now, kbit/s (0 = unlimited)
+            o["effUp"]        = devs[i].effUpKbps;
             o["down"]         = devs[i].downKbps == SPEED_DEFAULT ? -1 : (int64_t)devs[i].downKbps;   // -1 = default
             o["up"]           = devs[i].upKbps   == SPEED_DEFAULT ? -1 : (int64_t)devs[i].upKbps;
             o["blocked"]      = devs[i].blocked;
@@ -407,11 +414,12 @@ void webServer_init() {
         ClientInfo ci;
         if (!quota_clientInfo((uint32_t)req->client()->remoteIP(), ci)) { sendJson(req, 404, "{\"error\":\"unknown\"}"); return; }
         JsonDocument doc;
-        uint32_t pct = ci.limitMB ? (uint32_t)(ci.bytesToday * 100ULL / ((uint64_t)ci.limitMB * 1048576ULL)) : 0;
+        uint32_t pct = ci.limitMB ? (uint32_t)(ci.bytesToday * 100ULL / quota_effectiveBytes(ci.limitMB, ci.bonusMB)) : 0;
         const char *state = "ok";
         if (quota_internetOff() && !ci.whitelisted) state = "off";
         else if (ci.quotaHit)                        state = "limit";
         else if (ci.blocked)                         state = "blocked";
+        else if (ci.exhausted && (ci.quotaAction == QA_SLOW || ci.quotaAction == QA_CUSTOM)) state = "slow";
         else if (ci.limitMB && pct >= QUOTA_WARN_PERCENT) state = "warn";
         char label[40];
         if (ci.name[0]) strlcpy(label, ci.name, sizeof(label)); else snprintf(label, sizeof(label), "User %u", ci.userNo);
@@ -420,6 +428,10 @@ void webServer_init() {
         doc["pending"] = ci.warnPending;
         doc["usedBytes"] = ci.bytesToday;
         doc["limitMB"] = ci.limitMB;
+        doc["bonusMB"] = ci.bonusMB;
+        doc["qAction"] = ci.quotaAction;
+        doc["slowKBps"] = ci.slowKBps;
+        doc["slowed"] = ci.exhausted && (ci.quotaAction == QA_SLOW || ci.quotaAction == QA_CUSTOM);
         doc["down"] = ci.downKbps;
         doc["up"] = ci.upKbps;
         doc["ads"] = adblock_blockedFor((uint32_t)req->client()->remoteIP());
@@ -557,6 +569,37 @@ void webServer_init() {
             req->send(400, "text/plain", "mb must be 0 - 10000000 (0 = unlimited)"); return;
         }
         textReply(req, quota_setLimit(param(req, "mac").c_str(), mb));
+    });
+
+    // What happens at the daily limit: action = block | slow | custom | notify. kbs (KB/s, decimal) only for custom.
+    server.on("/api/quotaAction", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!guard(req, true)) return;
+        String a = param(req, "action");
+        uint8_t act;
+        if      (a == "block")  act = QA_BLOCK;
+        else if (a == "slow")   act = QA_SLOW;
+        else if (a == "custom") act = QA_CUSTOM;
+        else if (a == "notify") act = QA_NOTIFY;
+        else { req->send(400, "text/plain", "action must be block, slow, custom or notify"); return; }
+        uint32_t kbs = 0;
+        if (act == QA_CUSTOM && (!parseUInt(param(req, "kbs"), QUOTA_SLOW_KBPS_MAX, kbs) || kbs < QUOTA_SLOW_KBPS_MIN)) {
+            req->send(400, "text/plain", "kbs must be 1 - 65000 KB/s"); return;
+        }
+        textReply(req, quota_setAction(param(req, "mac").c_str(), act, kbs));
+    });
+
+    // "Add Extra Data": mb of extra allowance for today only (cleared at the next daily reset). mb=0 with clear=1 removes it.
+    server.on("/api/bonus", HTTP_POST, [](AsyncWebServerRequest *req) {
+        if (!guard(req, true)) return;
+        if (param(req, "clear") == "1") { textReply(req, quota_clearBonus(param(req, "mac").c_str())); return; }
+        uint32_t mb;
+        if (!parseUInt(param(req, "mb"), QUOTA_BONUS_MAX_MB, mb) || mb == 0) {
+            req->send(400, "text/plain", "mb must be 1 - 1000000"); return;
+        }
+        if (!quota_addBonus(param(req, "mac").c_str(), mb)) {
+            req->send(400, "text/plain", "device not found, or it has no daily limit (unlimited)"); return;
+        }
+        req->send(200, "text/plain", "ok");
     });
 
     server.on("/api/whitelist", HTTP_POST, [](AsyncWebServerRequest *req) {
