@@ -34,6 +34,8 @@ Form-encoded bodies, as `application/x-www-form-urlencoded`. A MAC may use `:` o
 | `POST /api/block` | `mac` | 200 / 404 |
 | `POST /api/unblock` | `mac` | 200 / 404 |
 | `POST /api/whitelist` | `mac`, `enabled` (`1` or `0`) | 200 / 404 |
+| `POST /api/quotaAction` | `mac`, `action` (`block` / `slow` / `custom` / `notify`), `kbs` (KB/s, decimal, 1-65000, only for `custom`) | 200 / 400 / 404 |
+| `POST /api/bonus` | `mac`, `mb` (1-1000000: extra data for today only, adds up) or `clear=1` | 200 / 400 (unknown device or no daily limit) |
 | `POST /api/setLimit` | `mac`, `mb` (0-10000000, `0` = unlimited) | 200 / 400 / 404 |
 | `POST /api/ping` | `host` (hostname or IP) | 202 and the state; 409 if busy or invalid |
 | `GET /api/ping` | | `{"state":"idle\|running\|done\|error", ...}` |

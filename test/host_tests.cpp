@@ -2,6 +2,7 @@
 #include "apps.h"
 #include "dns_parse.h"
 #include "shaper.h"
+#include "quota_policy.h"
 #include "adblock.h"
 #include "blocklist_data.h"
 #include "adult_data.h"
@@ -492,6 +493,70 @@ static void testBlockedReply() {
     CHECK(dns_buildBlocked(q.data(), (int)q.size(), out, 20) == 0);
 }
 
+
+// ---- quota exhaustion action + today's bonus (quota_policy.h) ----
+// Drives the same Bucket the firmware uses: offered load far above the cap, 1500-byte frames, simulated clock.
+static double simulateKBps(uint32_t bytesPerSec, double offeredKBps, double seconds) {
+    Bucket b = {};
+    uint64_t now = 1000000, passed = 0;
+    const uint32_t len = 1500;
+    uint64_t gapUs = (uint64_t)(len / (offeredKBps * 1000.0) * 1e6);
+    uint64_t end = now + (uint64_t)(seconds * 1e6);
+    for (; now < end; now += gapUs) {
+        bucket_refill(b, bytesPerSec, now);
+        if (bucket_has(b, len)) { bucket_take(b, len); passed += len; }
+    }
+    return passed / seconds / 1000.0;
+}
+
+static void testQuotaPolicy() {
+    // units: quota/bonus in MiB, slow-down in decimal KB/s
+    CHECK(quota_effectiveBytes(1024, 200) == 1224ULL * 1048576ULL);
+    CHECK(quota_slowBytesPerSec(QA_SLOW, 0) == 30000);
+    CHECK(quota_slowBytesPerSec(QA_CUSTOM, 64) == 64000);
+    CHECK(quota_slowBytesPerSec(QA_CUSTOM, 0) == 30000);                 // never saved: fall back, never "unlimited"
+    CHECK(quota_slowBytesPerSec(QA_CUSTOM, 999999) == QUOTA_SLOW_KBPS_MAX * 1000u);
+    CHECK(quota_slowBytesPerSec(QA_BLOCK, 30) == 0 && quota_slowBytesPerSec(QA_NOTIFY, 30) == 0);
+    CHECK(quota_actionValid(QA_NOTIFY) && !quota_actionValid(4));
+
+    // the example from the request: 1 GB quota, 1 GB used, +200 MB bonus
+    const uint64_t used = 1024ULL * 1048576ULL;
+    CHECK(quota_exhausted(1024, 0, used));
+    CHECK(quota_remainingMB(1024, 0, used) == 0);
+    uint32_t bonus = 0;
+    CHECK(quota_bonusAdd(bonus, 200));
+    CHECK(!quota_exhausted(1024, bonus, used));
+    CHECK(quota_remainingMB(1024, bonus, used) == 200);
+    CHECK(quota_bonusAdd(bonus, 50) && bonus == 250);                    // several bonuses in one day add up
+    CHECK(quota_remainingMB(1024, bonus, used) == 250);
+    CHECK(quota_exhausted(1024, bonus, used + 250ULL * 1048576ULL));     // allowance used up again
+    CHECK(!quota_bonusAdd(bonus, 0) && !quota_bonusAdd(bonus, QUOTA_BONUS_MAX_MB + 1) && bonus == 250);
+    uint32_t big = QUOTA_BONUS_MAX_MB - 1;
+    CHECK(quota_bonusAdd(big, 100) && big == QUOTA_BONUS_MAX_MB);        // saturates, never wraps
+    CHECK(!quota_exhausted(0, 0, 1ULL << 40));                            // 0 = unlimited
+
+    // normal 2 MB/s, slow action: 2 MB/s before, 30 KB/s after, 2 MB/s again after a bonus / reset
+    const uint32_t normal = 2000000;
+    CHECK(quota_effectiveRate(normal, false, QA_SLOW, 0) == normal);
+    CHECK(quota_effectiveRate(normal, true,  QA_SLOW, 0) == 30000);
+    CHECK(quota_effectiveRate(normal, quota_exhausted(1024, 200, used), QA_SLOW, 0) == normal);   // bonus: back to normal
+    CHECK(quota_effectiveRate(0, true, QA_SLOW, 0) == 30000);            // unlimited normal speed: slow still applies
+    CHECK(quota_effectiveRate(10000, true, QA_SLOW, 0) == 10000);        // a lower normal cap is never raised
+    CHECK(quota_effectiveRate(normal, true, QA_CUSTOM, 128) == 128000);
+    CHECK(quota_effectiveRate(normal, true, QA_BLOCK, 0) == normal);     // block / notify do not touch the speed
+    CHECK(quota_effectiveRate(normal, true, QA_NOTIFY, 0) == normal);
+
+    // the real bucket: offered 1 MB/s, cap 30 KB/s -> about 30 KB/s gets through (within the burst allowance)
+    double kb = simulateKBps(quota_effectiveRate(normal, true, QA_SLOW, 0), 1000.0, 20.0);
+    CHECK(kb > 28.0 && kb < 34.0);
+    double kb64 = simulateKBps(quota_slowBytesPerSec(QA_CUSTOM, 64), 1000.0, 20.0);
+    CHECK(kb64 > 61.0 && kb64 < 70.0);
+    double fast = simulateKBps(normal, 1000.0, 5.0);                      // offered below the normal cap: untouched
+    CHECK(fast > 990.0 && fast < 1010.0);
+    // a frame bigger than a full bucket can never pass: the burst floor (8 KB) must stay above one frame
+    CHECK(bucket_burst(30000) >= 1514);
+}
+
 int main() {
     testClassify();
     testCustomRules();
@@ -506,6 +571,7 @@ int main() {
     testHosts();
     testSetRule();
     testBlockedReply();
+    testQuotaPolicy();
     printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

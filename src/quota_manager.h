@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include "apps.h"
 #include "shaper.h"
+#include "quota_policy.h"
 
 #define SPEED_DEFAULT    0xFFFFFFFFu   // "use the default speed" (0 = unlimited)
 #define NAME_MAX_BYTES   32
@@ -29,6 +30,15 @@ struct DeviceUsage {
     bool     warnPending;               // the user has not seen it yet
     uint32_t warnSince;                 // millis() when it was triggered
     uint64_t appBlock;                  // bit n set = app n is killed for this user (no data reaches it)
+    uint8_t  quotaAction;               // QuotaAction: what happens at the daily limit (0 = block, the old behaviour)
+    uint32_t slowKBps;                  // slow-down speed for QA_CUSTOM, KB/s (decimal), 0 = not set
+    uint32_t bonusMB;                   // extra data for TODAY only; cleared at the daily reset
+    bool     autoBlock;                 // `blocked` was set by the quota (a bonus may lift it), not by the admin
+    bool     exhaustNoted;              // internal: the hook saw the quota used up (slow down / notify actions)
+    bool     exhaustLogged;             // internal: quota_loop() already reported it today
+    bool     exhausted;                 // filled in by quota_snapshot(): limit + bonus is used up and the device is not exempt
+    uint32_t effDownKbps;               // filled in by quota_snapshot(): the speed really enforced now, kbit/s (0 = unlimited)
+    uint32_t effUpKbps;
     uint32_t lastSeenMs;                // millis() of the last frame
     Bucket   dl, ul;                    // internal: speed limiter state
 };
@@ -64,6 +74,16 @@ bool quota_setWhitelist(const char *macStr, bool enabled);
 bool quota_setName(const char *macStr, const char *name);                 // "" clears the name
 bool quota_setDeviceSpeed(const char *macStr, uint32_t downKbps, uint32_t upKbps);
 
+// What happens when the daily limit (plus today's bonus) is used up. action: QuotaAction.
+// slowKBps is only used by QA_CUSTOM (KB/s, decimal: 30 KB/s = 30 000 bytes/s).
+// Changing it starts from a clean state: a device that was auto-blocked and is now set to slow down is released.
+bool quota_setAction(const char *macStr, uint8_t action, uint32_t slowKBps);
+// "Add Extra Data": adds to today's bonus on top of the permanent limit. Not saved as a setting: it belongs to the
+// current quota day and disappears at the next reset. Fails for unlimited devices. Lifts an automatic (quota) block
+// when the new allowance is not used up yet; an admin block stays.
+bool quota_addBonus(const char *macStr, uint32_t addMB);
+bool quota_clearBonus(const char *macStr);
+
 // When was it used? hoursKB[h][category] = KB moved in local hour h today; appMask[app] has bit h set
 // when that app moved at least 64 KB in hour h. macStr == nullptr: all devices together.
 bool quota_hourly(const char *macStr, uint32_t hoursKB[24][CAT_COUNT], uint32_t *appMask);
@@ -92,6 +112,10 @@ struct ClientInfo {
     char     macStr[18];
     uint64_t bytesToday;
     uint32_t limitMB;
+    uint32_t bonusMB;                   // today's extra data
+    uint8_t  quotaAction;
+    uint32_t slowKBps;                  // the slow-down speed in force for this device (KB/s)
+    bool     exhausted;                 // limit + bonus used up
     uint32_t downKbps, upKbps;          // SPEED_DEFAULT already resolved to the default
     bool     blocked;                   // paused (by the quota or by the admin)
     bool     quotaHit;                  // ... because the daily limit was reached

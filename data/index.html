@@ -120,6 +120,28 @@ nav.bottom{display:none}
     <input id="dName" maxlength="32" autocomplete="off">
     <label class="f" for="dLimit" data-t="dailyLimit"></label>
     <input id="dLimit" type="number" min="0" max="10000000" inputmode="numeric" placeholder="0">
+    <label class="f" for="dAction" data-t="qAction"></label>
+    <select id="dAction">
+      <option value="block" data-t="qaBlock"></option><option value="slow" data-t="qaSlow"></option>
+      <option value="custom" data-t="qaCustom"></option><option value="notify" data-t="qaNotify"></option>
+    </select>
+    <div id="dSlowBox" style="display:none">
+      <label class="f" for="dSlow" data-t="qaSpeed"></label>
+      <input id="dSlow" type="number" min="1" max="65000" step="1" inputmode="numeric" list="slowList" placeholder="30">
+      <datalist id="slowList"><option value="30"><option value="64"><option value="128"><option value="256"></datalist>
+    </div>
+    <div class="note" data-t="qaHint"></div>
+    <div id="dBonusBox" style="margin-top:10px">
+      <label class="f" data-t="bonusTitle"></label>
+      <div id="dBonusInfo" class="small" style="line-height:1.6"></div>
+      <div class="row wrap" id="dBonusPresets" style="gap:6px;margin-top:6px"></div>
+      <div class="row" style="gap:6px;margin-top:6px">
+        <input id="dBonusAmt" type="number" min="1" step="1" inputmode="numeric" style="flex:1" aria-label="amount">
+        <select id="dBonusUnit" style="width:auto"><option value="1">MB</option><option value="1024">GB</option></select>
+        <button type="button" class="btn" id="dBonusAdd" data-t="bonusAdd"></button>
+      </div>
+      <button type="button" class="btn sm" id="dBonusClear" data-t="bonusClear" style="margin-top:6px"></button>
+    </div>
     <div class="two">
       <div><label class="f" for="dDown" data-t="downMbps"></label><input id="dDown" type="number" min="0" step="0.1" inputmode="decimal"></div>
       <div><label class="f" for="dUp" data-t="upMbps"></label><input id="dUp" type="number" min="0" step="0.1" inputmode="decimal"></div>
@@ -155,6 +177,11 @@ const I18N = {
   rename:'Edit',name:'Name',save:'Save',cancel:'Cancel',block:'Block',unblock:'Unblock',blocked:'Blocked',limited:'Limited',trusted:'Trusted',
   dailyLimit:'Daily data limit (MB, 0 = none)',downMbps:'Download cap (Mbps)',upMbps:'Upload cap (Mbps)',
   speedBlankHint:'Leave a speed box empty to use the default for everyone. 0 = unlimited.',whitelist:'Trusted device (never limited or blocked)',
+  qAction:'When the daily quota is used up',qaBlock:'Block internet access',qaSlow:'Slow down to 30 KB/s',qaCustom:'Slow down to a custom speed',qaNotify:'Notify only (no restriction)',
+  qaSpeed:'Slow-down speed in KB/s (kilobytes per second, 30 KB/s = 30,000 bytes/s)',qaHint:'Applies to download and upload. The normal speed returns at the daily reset.',
+  bonusTitle:'Extra data for today',bonusAdd:'Add Extra Data',bonusClear:'Remove today\'s bonus',bonusNoLimit:'Set a daily limit first: an unlimited device needs no extra data.',
+  bonusQuota:'Daily quota',bonusUsed:'Used',bonusRemain:'Remaining',bonusExpires:'Bonus expires',bonusReset:'At the next daily reset',bonusWord:'bonus',
+  qExhaustedSlow:'Quota exhausted — Limited to',qExhaustedNote:'Quota exhausted — not restricted',
   saved:'Saved',failed:'Failed',
   cat0:'Video',cat1:'Social',cat2:'Messaging',cat3:'Browsing',cat4:'Music',cat5:'Gaming',cat6:'Downloads',cat7:'Other',
   usage:'Usage',thisDevice:'All users',user:'User',app:'App',traffic:'Traffic',byCategory:'By category',byApp:'By app',
@@ -206,6 +233,11 @@ const I18N = {
   rename:'تعديل',name:'الاسم',save:'حفظ',cancel:'إلغاء',block:'حظر',unblock:'إلغاء الحظر',blocked:'محظور',limited:'محدود',trusted:'موثوق',
   dailyLimit:'حد البيانات اليومي (ميغابايت، 0 = بلا حد)',downMbps:'سقف التنزيل (ميغابت/ث)',upMbps:'سقف الرفع (ميغابت/ث)',
   speedBlankHint:'اترك خانة السرعة فارغة لاستخدام الافتراضي للجميع. 0 = بلا حد.',whitelist:'جهاز موثوق (لا يُحدّ ولا يُحظر)',
+  qAction:'عند استهلاك الحصة اليومية',qaBlock:'حظر الإنترنت',qaSlow:'تبطيء إلى 30 كيلوبايت/ث',qaCustom:'تبطيء إلى سرعة مخصصة',qaNotify:'إشعار فقط (بلا تقييد)',
+  qaSpeed:'سرعة التبطيء بالكيلوبايت/ث (كيلوبايت وليس كيلوبت، 30 ك.ب/ث = 30,000 بايت/ث)',qaHint:'تنطبق على التنزيل والرفع. تعود السرعة العادية عند التصفير اليومي.',
+  bonusTitle:'بيانات إضافية لليوم',bonusAdd:'إضافة بيانات',bonusClear:'إزالة إضافة اليوم',bonusNoLimit:'حدد حدًا يوميًا أولًا: الجهاز غير المحدود لا يحتاج بيانات إضافية.',
+  bonusQuota:'الحصة اليومية',bonusUsed:'المستخدم',bonusRemain:'المتبقي',bonusExpires:'تنتهي الإضافة',bonusReset:'عند التصفير اليومي التالي',bonusWord:'إضافة',
+  qExhaustedSlow:'انتهت الحصة — السرعة محدودة بـ',qExhaustedNote:'انتهت الحصة — بلا تقييد',
   saved:'تم الحفظ',failed:'فشل',
   cat0:'فيديو',cat1:'اجتماعي',cat2:'مراسلة',cat3:'تصفح',cat4:'موسيقى',cat5:'ألعاب',cat6:'تنزيلات',cat7:'أخرى',
   usage:'الاستهلاك',thisDevice:'كل المستخدمين',user:'المستخدم',app:'التطبيق',traffic:'البيانات',byCategory:'حسب الفئة',byApp:'حسب التطبيق',
@@ -409,7 +441,9 @@ function rUsers(){
     const tags=[];
     if(d.blocked)tags.push(h('span',{class:'tag red'},t('blocked')));
     if(d.whitelisted)tags.push(h('span',{class:'tag green'},t('trusted')));
-    if(d.limitMB>0)tags.push(h('span',{class:'tag amber'},fmtBytes(d.bytesToday)+' / '+d.limitMB+' MB'));
+    if(d.limitMB>0)tags.push(h('span',{class:'tag amber'},fmtBytes(d.bytesToday)+' / '+d.limitMB+' MB'+(d.bonusMB>0?' + '+d.bonusMB+' MB '+t('bonusWord'):'')));
+    if(d.exhausted&&!d.whitelisted&&!d.blocked&&(d.qAction===1||d.qAction===2))tags.push(h('span',{class:'tag red'},t('qExhaustedSlow')+' '+d.slowKBps+' KB/s'));
+    else if(d.exhausted&&!d.whitelisted&&d.qAction===3)tags.push(h('span',{class:'tag amber'},t('qExhaustedNote')));
     if(d.down!==-1||d.up!==-1)tags.push(h('span',{class:'tag'},'↓ '+fmtSpeed(d.down)+'  ↑ '+fmtSpeed(d.up)));
     if(d.ads>0)tags.push(h('span',{class:'tag green'},d.ads+' '+t('ads')));
     if(d.online&&d.rssi)tags.push(h('span',{class:'tag'+(d.rssi<=-80?' red':d.rssi<=-70?' amber':'')},t('signalDbm')+' '+d.rssi+' dBm'+(d.rssi<=-80?' · '+t('weak'):'')));
@@ -794,6 +828,10 @@ function openDialog(mac){
   $('dlgSub').textContent=(d.ip?d.ip+' · ':'')+d.mac;
   $('dName').value=d.name||'';$('dName').placeholder=t('user_')+' '+d.userNo;
   $('dLimit').value=d.limitMB||'';
+  $('dAction').value=['block','slow','custom','notify'][d.qAction]||'block';
+  $('dSlow').value=d.qAction===2?d.slowKBps:'';
+  $('dSlowBox').style.display=d.qAction===2?'':'none';
+  fillBonus(d);
   $('dDown').value=d.down>=0?d.down/1000:'';$('dUp').value=d.up>=0?d.up/1000:'';
   $('dWhite').checked=!!d.whitelisted;
   $('dBlock').textContent=d.blocked?t('unblock'):t('block');
@@ -817,6 +855,41 @@ function fillKill(d){
         return h('label',{class:'tag',style:'cursor:pointer;display:inline-flex;gap:5px;align-items:center'},cb,appName(i))})));
   }
 }
+$('dAction').onchange=()=>{$('dSlowBox').style.display=$('dAction').value==='custom'?'':'none'};
+function fillBonus(d){
+  d=d||devByMac(dlgMac);if(!d)return;
+  const on=d.limitMB>0,box=$('dBonusInfo');
+  $('dBonusAmt').disabled=$('dBonusAdd').disabled=$('dBonusUnit').disabled=!on;
+  $('dBonusClear').style.display=d.bonusMB>0?'':'none';
+  if(!on){box.textContent=t('bonusNoLimit');$('dBonusPresets').replaceChildren();return}
+  box.replaceChildren(
+    h('div',null,t('bonusQuota')+': '+fmtBytes(d.limitMB*1048576)+(d.bonusMB>0?' + '+fmtBytes(d.bonusMB*1048576)+' '+t('bonusWord'):'')),
+    h('div',null,t('bonusUsed')+': '+fmtBytes(d.bytesToday)),
+    h('div',null,t('bonusRemain')+': '+fmtBytes(d.remainMB*1048576)),
+    d.bonusMB>0?h('div',null,t('bonusExpires')+': '+t('bonusReset')):null);
+  const pre=$('dBonusPresets');pre.replaceChildren();
+  [[50,'50 MB'],[100,'100 MB'],[250,'250 MB'],[500,'500 MB'],[1024,'1 GB']].forEach(p=>
+    pre.append(h('button',{type:'button',class:'btn sm',onclick:e=>addBonus(p[0],e.target)},'+'+p[1])));
+}
+async function addBonus(mb,btn){
+  if(!(mb>=1))return;
+  if(btn){if(btn.disabled)return;btn.disabled=true}                  // no duplicate requests
+  const x=await post('/api/bonus',{mac:dlgMac,mb:String(mb)});
+  if(btn)btn.disabled=false;
+  if(x.ok){toast(t('saved'));$('dBonusAmt').value='';await poke();fillBonus()}
+  else{$('dMsg').className='msg err';$('dMsg').textContent=x.text||t('failed')}
+}
+$('dBonusAdd').onclick=e=>{
+  const v=Number($('dBonusAmt').value),u=Number($('dBonusUnit').value);
+  const mb=Math.round(v*u);
+  if(!(v>0)||!(mb>=1)||mb>1000000){$('dMsg').className='msg err';$('dMsg').textContent=t('failed');return}
+  addBonus(mb,e.currentTarget);
+};
+$('dBonusClear').onclick=async e=>{
+  if(!confirm(t('bonusClear')+'?'))return;
+  const x=await post('/api/bonus',{mac:dlgMac,clear:'1'});
+  if(x.ok){toast(t('saved'));await poke();fillBonus()}else{$('dMsg').className='msg err';$('dMsg').textContent=x.text||t('failed')}
+};
 $('dCancel').onclick=()=>$('dlg').close();
 $('dForget').onclick=async()=>{
   if(!confirm(t('forgetAsk')))return;
@@ -836,8 +909,11 @@ $('dSave').onclick=async()=>{
   if([down,up].some(v=>v!=='default'&&!(Number(v)>=0&&Number(v)<=1000000)))return bad(t('failed'));
   const limit=$('dLimit').value.trim()===''?'0':$('dLimit').value.trim();
   if(!/^\d+$/.test(limit))return bad(t('failed'));
+  const act=$('dAction').value,slow=$('dSlow').value.trim();
+  if(act==='custom'&&!(/^\d+$/.test(slow)&&Number(slow)>=1&&Number(slow)<=65000))return bad(t('qaSpeed'));
   const jobs=[
     post('/api/rename',{mac:dlgMac,name:$('dName').value.trim()}),
+    post('/api/quotaAction',act==='custom'?{mac:dlgMac,action:act,kbs:slow}:{mac:dlgMac,action:act}),
     post('/api/setLimit',{mac:dlgMac,mb:limit}),
     post('/api/speed',{mac:dlgMac,down,up}),
     post('/api/whitelist',{mac:dlgMac,enabled:$('dWhite').checked?'1':'0'})
