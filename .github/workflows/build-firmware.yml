@@ -50,6 +50,15 @@ jobs:
             exit 1
           }
 
+      - name: Decode crash backtrace (scripts/backtrace.txt)
+        if: hashFiles('scripts/backtrace.txt') != ''
+        run: |
+          ELF=.pio/build/esp32dev/firmware.elf
+          sha256sum "$ELF"
+          A2L=$(find ~/.platformio/packages -name 'xtensa-esp32-elf-addr2line' | head -1)
+          echo "addr2line: $A2L"
+          "$A2L" -pfiaC -e "$ELF" $(cat scripts/backtrace.txt)
+
       - name: Check the merged image fits in 4 MB flash
         run: |
           SIZE=$(stat -c%s dist/esp32dev-merged.bin)
