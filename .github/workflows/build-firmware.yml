@@ -46,7 +46,7 @@ jobs:
         run: |
           set -o pipefail
           pio run -t webflash 2>&1 | tee build.log || {
-            { grep -E "error|undefined reference|Error |FAILED|will not fit|overflow" build.log | head -12; grep -a -n "" build.log | sed -n "385,452p" | cut -c1-170; } | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+            echo "::error::$(sed -n '394,452p' build.log | tr -d '\000-\010\013-\037' | cut -c1-150 | tr '\n' '~' | cut -c1-6000)"
             exit 1
           }
 
