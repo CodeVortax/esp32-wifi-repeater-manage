@@ -42,11 +42,16 @@ jobs:
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
+      # Built first, in its own run: a nested "pio run -t buildfs" from inside the webflash step now
+      # removes firmware.bin on the current PlatformIO, so the merge step could not find it.
+      - name: Build the web UI image
+        run: pio run -t buildfs
+
       - name: Build firmware and web UI, merge into one image
         run: |
           set -o pipefail
           pio run -t webflash 2>&1 | tee build.log || {
-            grep -E "error|undefined reference|Error " build.log | head -15 | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+            echo "::error::$(sed -n '394,452p' build.log | tr -d '\000-\010\013-\037' | cut -c1-150 | tr '\n' '~' | cut -c1-6000)"
             exit 1
           }
 
@@ -76,6 +81,7 @@ jobs:
           cp dist/ota-firmware.bin "$NAME-ota-firmware.bin"    # Update over WiFi: firmware
           cp dist/ota-ui.bin "$NAME-ota-ui.bin"                # Update over WiFi: dashboard files
           for f in "$NAME.bin" "$NAME-ota-firmware.bin" "$NAME-ota-ui.bin"; do sha256sum "$f" > "$f.sha256"; done
+          gzip -9c .pio/build/*/firmware.elf > "$NAME.elf.gz"   # turns a crash backtrace into function names
           echo "ARTIFACT=$NAME" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
@@ -106,4 +112,4 @@ jobs:
             --title "Latest build (master)" --notes "Rolling build of master. For a flaky connection: curl -L -C - -O <asset url>" \
             "$ARTIFACT-ota-firmware.bin" "$ARTIFACT-ota-firmware.bin.sha256" \
             "$ARTIFACT-ota-ui.bin" "$ARTIFACT-ota-ui.bin.sha256" \
-            "$ARTIFACT.bin" "$ARTIFACT.bin.sha256"
+            "$ARTIFACT.bin" "$ARTIFACT.bin.sha256" "$ARTIFACT.elf.gz"
