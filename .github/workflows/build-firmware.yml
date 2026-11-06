@@ -76,6 +76,7 @@ jobs:
           cp dist/ota-firmware.bin "$NAME-ota-firmware.bin"    # Update over WiFi: firmware
           cp dist/ota-ui.bin "$NAME-ota-ui.bin"                # Update over WiFi: dashboard files
           for f in "$NAME.bin" "$NAME-ota-firmware.bin" "$NAME-ota-ui.bin"; do sha256sum "$f" > "$f.sha256"; done
+          gzip -9c .pio/build/*/firmware.elf > "$NAME.elf.gz"   # turns a crash backtrace into function names
           echo "ARTIFACT=$NAME" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
@@ -106,4 +107,4 @@ jobs:
             --title "Latest build (master)" --notes "Rolling build of master. For a flaky connection: curl -L -C - -O <asset url>" \
             "$ARTIFACT-ota-firmware.bin" "$ARTIFACT-ota-firmware.bin.sha256" \
             "$ARTIFACT-ota-ui.bin" "$ARTIFACT-ota-ui.bin.sha256" \
-            "$ARTIFACT.bin" "$ARTIFACT.bin.sha256"
+            "$ARTIFACT.bin" "$ARTIFACT.bin.sha256" "$ARTIFACT.elf.gz"

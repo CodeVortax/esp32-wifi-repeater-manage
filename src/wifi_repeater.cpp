@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <esp_netif.h>
 #include <esp_wifi.h>
+#include <esp_system.h>
 #include <Preferences.h>
 
 extern "C" {
@@ -120,6 +121,13 @@ void wifiRepeater_init() {
     WiFi.onEvent(onWifiEvent);
     WiFi.mode(WIFI_AP_STA);
     WiFi.setSleep(false);                // lower latency / higher throughput for a repeater
+    // A weak USB supply that dips under the radio's transmit bursts resets the chip ("brownout").
+    // If that was the reason for this restart, step the transmit power down one level for good.
+    if (esp_reset_reason() == ESP_RST_BROWNOUT) {
+        uint8_t level = wifiRepeater_getTxLevel();
+        if (level < 3) wifiRepeater_setTxLevel(level + 1);
+        Serial.printf("[WIFI] brownout restart: transmit power lowered to level %u\n", (unsigned)wifiRepeater_getTxLevel());
+    }
     applyRadio(wifiRepeater_getTxLevel());
 
     String apSsid  = settings_getApSsid();
