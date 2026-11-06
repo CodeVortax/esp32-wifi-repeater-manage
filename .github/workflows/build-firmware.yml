@@ -42,6 +42,11 @@ jobs:
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
+      # Built first, in its own run: a nested "pio run -t buildfs" from inside the webflash step now
+      # removes firmware.bin on the current PlatformIO, so the merge step could not find it.
+      - name: Build the web UI image
+        run: pio run -t buildfs
+
       - name: Build firmware and web UI, merge into one image
         run: |
           set -o pipefail
