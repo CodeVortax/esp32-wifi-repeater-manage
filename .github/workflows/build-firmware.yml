@@ -1,0 +1,150 @@
+name: Build & Auto-Release Firmware
+
+on:
+  push:
+    branches: ["master", "main", "feature/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Host tests (app matching, DNS parsing, speed limiter)
+        if: hashFiles('test/Makefile') != ''
+        run: |
+          make -C test CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -I../src"
+
+      - name: Verify blocklist is up to date
+        if: hashFiles('scripts/gen_blocklist.py') != ''
+        run: |
+          python3 scripts/gen_blocklist.py
+          git diff --exit-code src/blocklist_data.h src/adult_data.h blocklist/compiled-names.txt
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install -U platformio esptool
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Build single-image firmware (UI embedded in PROGMEM)
+        run: |
+          set -o pipefail
+          pio run 2>&1 | tee build.log
+
+      - name: Build merged first-flash image (0x0) & verify sizes
+        run: |
+          mkdir -p dist
+          FW=".pio/build/esp32dev/firmware.bin"
+          BL=".pio/build/esp32dev/bootloader.bin"
+          PT=".pio/build/esp32dev/partitions.bin"
+
+          FW_SIZE=$(stat -c%s "$FW")
+          MAX_APP=$((0x360000))
+          echo "firmware.bin: $FW_SIZE bytes (max $MAX_APP)"
+          [ "$FW_SIZE" -le "$MAX_APP" ] || { echo "::error::firmware.bin exceeds 0x360000 factory partition"; exit 1; }
+
+          python3 -m esptool --chip esp32 merge_bin \
+            --fill-flash-size 4MB \
+            --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            -o dist/esp32dev-first-flash-0x0.bin \
+            0x1000 "$BL" \
+            0x8000 "$PT" \
+            0x10000 "$FW"
+
+          cp "$FW" dist/firmware-0x10000.bin
+
+      - name: Package & checksum release artifacts
+        run: |
+          TAG="${GITHUB_REF_NAME//\//-}"
+          NAME="esp32-wifi-repeater-${TAG}"
+          cp dist/firmware-0x10000.bin "${NAME}-firmware-0x10000.bin"
+          cp dist/esp32dev-first-flash-0x0.bin "${NAME}-first-flash-0x0.bin"
+          gzip -9c .pio/build/esp32dev/firmware.elf > "${NAME}.elf.gz"
+
+          for f in "${NAME}-firmware-0x10000.bin" "${NAME}-first-flash-0x0.bin"; do
+            sha256sum "$f" > "${f}.sha256"
+          done
+          echo "ARTIFACT=$NAME" >> "$GITHUB_ENV"
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          ver = ref.lstrip("v")
+          text = Path("CHANGELOG.md").read_text(encoding="utf-8") if Path("CHANGELOG.md").exists() else ""
+
+          section = ""
+          if text:
+              target = re.escape(ver) if os.environ.get("GITHUB_REF", "").startswith("refs/tags/") else "Unreleased"
+              m = re.search(rf"^## \[{target}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, flags=re.M | re.S)
+              if not m and ver:
+                  m = re.search(r"^## \[\d+\.\d+\.\d+\][^\n]*\n(.*?)(?=^## \[|\Z)", text, flags=re.M | re.S)
+              if m:
+                  section = m.group(1).strip()
+
+          flash_note = (
+              "\n\n---\n"
+              "### Flashing Instructions\n"
+              "- **First-time partition migration**: Flash `*-first-flash-0x0.bin` at `0x0` **once**.\n"
+              "- **Standard upgrades**: Flash **only `*-firmware-0x10000.bin` at `0x10000`** (keeps bootloader, partition table & `nvblock` intact)."
+          )
+          body = (section or "Automated ESP32 repeater firmware build.") + flash_note
+          Path("dist/release-notes.md").write_text(body, encoding="utf-8")
+          PY
+
+      - name: Upload workflow build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            ${{ env.ARTIFACT }}*.bin
+            ${{ env.ARTIFACT }}*.bin.sha256
+            ${{ env.ARTIFACT }}.elf.gz
+
+      - name: Create GitHub Release (on tag v*)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: dist/release-notes.md
+          generate_release_notes: true
+          files: |
+            ${{ env.ARTIFACT }}-firmware-0x10000.bin
+            ${{ env.ARTIFACT }}-firmware-0x10000.bin.sha256
+            ${{ env.ARTIFACT }}-first-flash-0x0.bin
+            ${{ env.ARTIFACT }}-first-flash-0x0.bin.sha256
+            ${{ env.ARTIFACT }}.elf.gz
+
+      - name: Publish rolling "latest" release (on master/main push)
+        if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest --prerelease --target "$GITHUB_SHA" \
+            --title "Latest build (${GITHUB_REF_NAME})" \
+            --notes-file dist/release-notes.md \
+            "${{ env.ARTIFACT }}-firmware-0x10000.bin" \
+            "${{ env.ARTIFACT }}-firmware-0x10000.bin.sha256" \
+            "${{ env.ARTIFACT }}-first-flash-0x0.bin" \
+            "${{ env.ARTIFACT }}-first-flash-0x0.bin.sha256" \
+            "${{ env.ARTIFACT }}.elf.gz"

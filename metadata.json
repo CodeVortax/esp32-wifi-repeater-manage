@@ -1,0 +1,6 @@
+{
+  "name": "VortaxMesh ESP32 Manager",
+  "description": "High-efficiency ESP32 WiFi repeater fleet manager, automatic channel & latency optimizer, precise time-window analytics, monthly cycle archiving, AES-256 encrypted backups, and unified static-block firmware studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
